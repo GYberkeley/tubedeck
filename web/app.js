@@ -1041,47 +1041,46 @@ function applyTheme(name) {
   store.set('theme', name);
   const css = getComputedStyle(document.documentElement), v = k => css.getPropertyValue(k).trim();
   Object.assign(THEME, { low: v('--wave-low'), mid: v('--wave-mid'), high: v('--wave-high'), playhead: v('--playhead'), A: v('--deck-a'), B: v('--deck-b'), halo: v('--wave-halo') });
-  vista.setActive(name);
+  setScenes(name);
   for (const d of Object.values(decks)) { d.color = THEME[d.letter]; d.overviewImg = null; }
   $('#themeSel').value = name;
 }
 // Shader scenes (scenes.js) render the waveform band on the GPU: one draw call per
 // frame, so the audio thread is untouched. Each compiles on first use; time advances
 // at the master deck's tempo and `beat` is the master deck's beat phase.
-const vista = {
-  gl: null, progs: {}, scene: null, t: 0, last: 0,
+class ShaderLayer {
+  constructor(selector, scenes, maxScale) { Object.assign(this, { selector, scenes, maxScale, gl: null, progs: {}, scene: null, t: 0, last: 0 }); }
   setActive(name) {
-    this.scene = SCENES[name] ? name : null;
-    document.documentElement.dataset.scene = this.scene ? 'shader' : '';
+    this.scene = this.scenes[name] ? name : null;
     if (this.scene && !this.gl) this.init();
-  },
+  }
   init() {
-    const cv = $('.scene.vista .water');
+    const cv = $(this.selector);
     const gl = cv && cv.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'low-power' });
     if (!gl) return;
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     Object.assign(this, { gl, cv });
-  },
+  }
   program(name) {
     if (this.progs[name] !== undefined) return this.progs[name];
     const gl = this.gl, sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
     const p = gl.createProgram();
     gl.attachShader(p, sh(gl.VERTEX_SHADER, 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
-    const fs = sh(gl.FRAGMENT_SHADER, SCENES[name]);
+    const fs = sh(gl.FRAGMENT_SHADER, this.scenes[name]);
     gl.attachShader(p, fs);
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.warn(`scene ${name}:`, gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(p)); return (this.progs[name] = null); }
     const a = gl.getAttribLocation(p, 'a');
     return (this.progs[name] = { p, a, res: gl.getUniformLocation(p, 'res'), t: gl.getUniformLocation(p, 't'), beat: gl.getUniformLocation(p, 'beat') });
-  },
+  }
   draw(now) {
     if (!this.scene || !this.gl) return;
     const dt = Math.min(0.1, (now - (this.last || now)) / 1000); this.last = now;
     if (!matchMedia('(prefers-reduced-motion: reduce)').matches) this.t += dt * (sceneBpm || 120) / 120;
     const prog = this.program(this.scene);
     if (!prog) return;
-    const { gl, cv } = this, scale = Math.min(1.25, window.devicePixelRatio || 1);
+    const { gl, cv } = this, scale = Math.min(this.maxScale, window.devicePixelRatio || 1);
     const w = Math.round(cv.clientWidth * scale), h = Math.round(cv.clientHeight * scale);
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
@@ -1090,8 +1089,18 @@ const vista = {
     const m = masterDeck(), beat = m && m.loaded ? ((((m.el.currentTime - m.firstBeat) / m.beatSec) % 1) + 1) % 1 : (this.t * 2) % 1;
     gl.uniform2f(prog.res, w, h); gl.uniform1f(prog.t, this.t); gl.uniform1f(prog.beat, beat);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
-  },
-};
+  }
+}
+// Shader scenes (scenes.js), drawn on the GPU (one draw call each per frame, so the
+// audio thread is untouched): the waveform band, and for some themes a full-screen
+// scene behind the console, drawn at reduced resolution.
+const vista = new ShaderLayer('.scene.vista .water', SCENES, 1.25);
+const under = new ShaderLayer('.under', UNDER_SCENES, .6);
+function setScenes(name) {
+  vista.setActive(name); under.setActive(name);
+  document.documentElement.dataset.scene = vista.scene ? 'shader' : '';
+  document.documentElement.dataset.under = under.scene ? 'on' : '';
+}
 
 let sceneBpm = 0;
 // The scene breathes with the music: --beat follows the master deck's tempo.
@@ -1464,6 +1473,7 @@ waves.init();
   fx.forEach(u => u.retime());
   syncSceneTempo();
   vista.draw(now);
+  under.draw(now);
   requestAnimationFrame(frame);
 })(performance.now());
 const clock = () => { const d = new Date(); $('#clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };

@@ -285,6 +285,21 @@
   --wave-bg: #03070e; --wave-scrim: rgba(0,0,0,.08); --wave-low: #2de89a; --wave-mid: #a77bff; --wave-high: #ffffff; --playhead: #c79bff; --wave-halo: rgba(0,0,0,.4);
 }
 
+/* Full-screen scene behind the console (Waterfall: the reef under the falls). Panels turn
+   to clear jade glass (no blur) so it shows through; controls stay solid. */
+.under { position: fixed; inset: 0; width: 100%; height: 100%; z-index: -1; display: none; pointer-events: none; }
+[data-under="on"] .under { display: block; }
+[data-under="on"] body { background: transparent; }
+[data-theme="waterfall"][data-under="on"] {
+  --panel: rgba(4, 34, 36, .42); --panel-mix: rgba(4, 30, 32, .55); --bar: rgba(5, 34, 34, .9);
+  --pad: rgba(10, 52, 52, .86);
+}
+[data-theme="waterfall"][data-under="on"] .browser { background: rgba(4, 26, 30, .7); }
+[data-theme="waterfall"][data-under="on"] .deck, [data-theme="waterfall"][data-under="on"] .mixer { background-image: none; }
+[data-theme="waterfall"][data-under="on"] .loop-len, [data-theme="waterfall"][data-under="on"] .loop-arrows button,
+[data-theme="waterfall"][data-under="on"] .tog:not(.on), [data-theme="waterfall"][data-under="on"] .stem { background-color: rgba(10, 52, 52, .88); }
+[data-theme="waterfall"][data-under="on"] .deck-head, [data-theme="waterfall"][data-under="on"] .stem-row { background: rgba(4, 30, 32, .5); }
+
 /* Themed controls that used fixed colours */
 .knob .arc { stroke: var(--blue); }
 .fx-on { border-color: color-mix(in srgb, var(--blue) 55%, transparent); background: color-mix(in srgb, var(--blue) 10%, var(--jog-bg)); color: color-mix(in srgb, var(--blue) 70%, white); }

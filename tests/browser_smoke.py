@@ -438,6 +438,9 @@ class BrowserSmoke(unittest.TestCase):
             if pg.evaluate(f"!!SCENES['{theme}']"):
                 pg.wait_for_timeout(100)
                 self.assertTrue(pg.evaluate(f"!vista.gl || !!vista.program('{theme}')"), f"{theme}: shader failed to compile")
+            if pg.evaluate(f"!!UNDER_SCENES['{theme}']"):
+                pg.wait_for_timeout(100)
+                self.assertTrue(pg.evaluate(f"!under.gl || !!under.program('{theme}')"), f"{theme}: background shader failed to compile")
         pg.select_option("#themeSel", "meadow")
         pg.reload()
         self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")
