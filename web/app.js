@@ -405,6 +405,7 @@ class Player {
     if (!keepPos) this.st = { pos: 0, playing: false, ended: false, rate: 0, t: ctx.currentTime };
     this.post({ type: 'load', stems, length: frames, offset, keepPos }, stems.map(s => s.data.buffer));
   }
+  addStems(stems) { this.post({ type: 'addStems', stems }, stems.map(s => s.data.buffer)); }
   unload() { this.frames = 0; this._playing = false; this.post({ type: 'load', stems: [], length: 0 }); this.st = { pos: 0, playing: false, ended: false, rate: 0, t: 0 }; }
   get duration() { return this.frames ? this.frames / this.sr : NaN; }
   get readyState() { return this.frames ? 4 : 0; }
@@ -658,7 +659,7 @@ class Deck {
         if (this.track !== meta) return;
         const { msg, transfer } = analyzer.channels(buf);
         const r = await analyzer.run({ type: 'pcm', ...msg }, transfer);
-        stems.push({ name, data: r.pcm, gain: this.stemOn[name] ? 1 : 0 });
+        stems.push({ name, data: r.pcm });
         refs.push(r.ref);
       }
       if (this.track !== meta) return;
@@ -666,7 +667,9 @@ class Deck {
       for (const r of refs) for (let i = 0; i < sum.length; i++) sum[i] += r[i];
       const { offset } = this.mixRef ? await analyzer.run({ type: 'align', mix: this.mixRef, stems: sum }, []) : { offset: 0 };
       if (this.track !== meta) return;
-      this.el.load(stems, this.el.frames, { offset, keepPos: true });
+      // The original keeps playing; stems sit at 0 and a muted one is subtracted (-1).
+      for (const s of stems) { s.offset = offset; s.gain = this.stemOn[s.name] ? 0 : -1; }
+      this.el.addStems(stems);
       this.stemsReady = true;
       this.renderStems();
     } catch (e) {
@@ -677,7 +680,7 @@ class Deck {
   toggleStem(name) {
     if (!this.stemsReady) return;
     this.stemOn[name] = !this.stemOn[name];
-    this.el.setGains({ [name]: this.stemOn[name] ? 1 : 0 });
+    this.el.setGains({ [name]: this.stemOn[name] ? 0 : -1 });
     this.renderStems();
   }
   renderStems(status, detail) {

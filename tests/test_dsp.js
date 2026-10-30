@@ -110,7 +110,7 @@ test('stem offset lines stems up with the mix timeline', () => {
   const d = new Int16Array(SR * 2 * 2);
   for (let i = 0; i < SR * 2; i++) d[i * 2] = d[i * 2 + 1] = Math.min(32767, i);
   const dsp = deck([{ name: 'vocals', data: d }], 2);
-  dsp.handle({ type: 'load', stems: [{ name: 'vocals', data: d }], length: SR * 2, offset: 100 });
+  dsp.handle({ type: 'load', stems: [{ name: 'vocals', data: d, offset: 100 }], length: SR * 2 });
   const t = [0, 0];
   dsp.frame(1000, t);
   assert.ok(Math.abs(t[0] * 32768 - 1100) < 1);
@@ -146,4 +146,22 @@ test('backspin runs backwards and winds down', () => {
   dsp.handle({ type: 'motion', kind: 'spin', seconds: 1 });
   render(dsp, 1.5);
   assert.ok(dsp.pos / SR < 4 && dsp.pos / SR > 3.5, `spun back to ${dsp.pos / SR}`);
+});
+
+test('mix minus a muted stem: original when nothing is muted, the remainder when muted', () => {
+  const vocals = tone(440, 3, 0.2), drums = tone(880, 3, 0.2), mix = new Int16Array(vocals.length);
+  for (let i = 0; i < mix.length; i++) mix[i] = vocals[i] + drums[i];
+  const dsp = deck([{ name: 'mix', data: mix }], 3);
+  dsp.handle({ type: 'set', playing: true, rate: 1 });
+  dsp.handle({ type: 'addStems', stems: [{ name: 'vocals', data: vocals, gain: 0 }, { name: 'drums', data: drums, gain: 0 }] });
+  const before = render(dsp, 0.2);
+  const plain = deck([{ name: 'mix', data: mix }], 3);
+  plain.handle({ type: 'set', playing: true, rate: 1 });
+  const ref = render(plain, 0.2);
+  let diff = 0; for (let i = 0; i < ref.length; i++) diff = Math.max(diff, Math.abs(ref[i] - before[i]));
+  assert.ok(diff < 1e-6, `all stems on plays exactly the mix (max diff ${diff})`);
+  dsp.handle({ type: 'set', gains: { drums: -1 } });
+  render(dsp, 0.05);
+  const muted = render(dsp, 0.5);
+  assert.ok(Math.abs(freqOf(muted) - 440) < 5, 'only vocals remain');
 });

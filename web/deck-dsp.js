@@ -2,8 +2,10 @@
 // Deck playback core, shared by the AudioWorklet (secure pages) and the
 // ScriptProcessor fallback (plain-http pages such as an iPad on the LAN).
 //
-// Audio is held as Int16 interleaved stereo, one array per stem (or a single
-// "mix"). Playback modes:
+// Audio is held as Int16 interleaved stereo: the original "mix", plus optional
+// stems added later. Stems normally sit at gain 0; muting one sets it to -1, so the
+// deck plays the original minus that stem (with nothing muted, exactly the original).
+// Playback modes:
 //   resample  - linear-interpolated varispeed (vinyl: pitch follows tempo)
 //   key lock  - WSOLA time-stretch so tempo changes keep the pitch
 //   scratch   - the position chases a target set by the jog wheel, at any
@@ -14,7 +16,6 @@ class DeckDSP {
   constructor(sampleRate) {
     this.sr = sampleRate;
     this.stems = [];          // [{name, data: Int16Array, gain, cur}]
-    this.offset = 0;          // stem sample offset relative to the mix timeline
     this.length = 0;          // frames
     this.pos = 0;             // frames: what is being heard now
     this.playing = false; this.rate = 1; this.keylock = true; this.ended = false;
@@ -35,13 +36,16 @@ class DeckDSP {
       case 'load': {
         const keep = m.keepPos ? this.pos : 0;
         const old = Object.fromEntries(this.stems.map(s => [s.name, s.gain]));
-        this.stems = m.stems.map(s => ({ name: s.name, data: s.data, gain: old[s.name] ?? s.gain ?? 1, cur: old[s.name] ?? s.gain ?? 1 }));
-        this.offset = m.offset || 0;
+        this.stems = m.stems.map(s => this.stem(s, old));
         this.length = m.length;
         this.pos = Math.min(keep, this.length); this.ended = false;
         this.resetStretch();
         break;
       }
+      case 'addStems':
+        // Stems join the playing mix in place: no restart, position kept.
+        this.stems = [...this.stems.filter(s => !m.stems.some(n => n.name === s.name)), ...m.stems.map(s => this.stem(s, {}))];
+        break;
       case 'set':
         if ('playing' in m) { if (m.playing && !this.playing) { this.ended = false; this.resetStretch(); } this.playing = m.playing; }
         if ('rate' in m) this.rate = m.rate;
@@ -71,6 +75,11 @@ class DeckDSP {
     }
   }
 
+  stem(s, old) {
+    const g = old[s.name] ?? s.gain ?? 1;
+    return { name: s.name, data: s.data, offset: s.offset || 0, gain: g, cur: g };
+  }
+
   // seq echoes the last command handled, so the page can drop reports older than its latest command.
   state() { return { pos: this.pos / this.sr, playing: this.playing && !this.scratching, ended: this.ended, rate: this.effectiveRate(), seq: this.seq || 0 }; }
   effectiveRate() { return this.scratching ? this.vel : this.motion ? (this.motionV || 0) : (this.playing ? this.rate : 0); }
@@ -83,7 +92,7 @@ class DeckDSP {
       const i0 = Math.floor(i), f = i - i0;
       for (const s of this.stems) {
         if (!s.cur) continue;
-        const k = i0 + this.offset;
+        const k = i0 + s.offset;
         if (k < 0 || k >= s.data.length / 2 - 1) continue;
         const d = s.data, a = k * 2;
         l += s.cur * (d[a] + (d[a + 2] - d[a]) * f);

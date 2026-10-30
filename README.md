@@ -39,13 +39,13 @@ Searches go through the helper by default. To search directly from the browser o
 
 ## Stems (optional)
 
-The helper can split a downloaded track into four stems (vocals, drums, bass, other) with [Demucs](https://github.com/adefossez/demucs), so you can mute or isolate parts while you practice. Separation runs locally on this Mac (on the GPU via Metal when it can, otherwise the CPU). It never contacts YouTube and doesn't count against the throttle.
+The helper can split a downloaded track into four stems (vocals, drums, bass, other) with [Demucs](https://github.com/adefossez/demucs), so you can mute or isolate parts while you practice. Separation runs locally on this Mac's CPU. (On Apple Silicon the GPU backend returns wrong stems without reporting an error, so it's off by default; set `TUBEDECK_STEMS_DEVICE` to try another device.) It never contacts YouTube and doesn't count against the throttle.
 
 ```bash
 ./scripts/install-stems.sh    # one-time: a venv in ~/.tubedeck/stems-venv with Demucs and PyTorch
 ```
 
-The install downloads about 140 MB (PyTorch), and the htdemucs model (about 84 MB) downloads the first time you separate a track. A 6-minute track took about 75 seconds on an Apple Silicon Mac (GPU, first run including the model download). Stems are cached as MP3s in `~/.tubedeck/cache/stems/`, so each track is separated only once. Restart the helper after installing; it prints whether stems are available.
+The install downloads about 140 MB (PyTorch), and the htdemucs model (about 84 MB) downloads the first time you separate a track. A 6-minute track takes about 2.5 minutes (measured: 156 s) on an Apple Silicon Mac's CPU. Decks keep playing the original track; muting a stem subtracts it, so with every stem on you hear the original exactly. Stems are cached as MP3s in `~/.tubedeck/cache/stems/`, so each track is separated only once. Restart the helper after installing; it prints whether stems are available.
 
 ## Tests
 

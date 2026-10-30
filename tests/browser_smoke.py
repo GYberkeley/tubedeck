@@ -275,10 +275,11 @@ class BrowserSmoke(unittest.TestCase):
         t = pg.evaluate("decks.A.el.currentTime")
         self.assertTrue(loop["start"] - 0.05 <= t <= loop["end"] + 0.05, f"{t} outside {loop}")
         pg.wait_for_function("decks.A.stemsReady", timeout=30000)
-        self.assertEqual([s["name"] for s in pg.evaluate("decks.A.el.dsp.stems.map(s => ({name: s.name}))")],
-                         ["vocals", "other", "bass", "drums"])
+        # The original mix keeps playing; stems wait at gain 0 and a muted stem is subtracted.
+        self.assertEqual(pg.evaluate("decks.A.el.dsp.stems.map(s => [s.name, s.gain])"),
+                         [["mix", 1], ["vocals", 0], ["other", 0], ["bass", 0], ["drums", 0]])
         pg.click(".deck[data-deck=A] .stem[data-stem=vocals]")
-        pg.wait_for_function("decks.A.el.dsp.stems[0].gain === 0")
+        pg.wait_for_function("decks.A.el.dsp.stems[1].gain === -1")
         pg.close()
 
     def test_effects(self):
