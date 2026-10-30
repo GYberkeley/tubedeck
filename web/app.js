@@ -270,11 +270,16 @@ class Player {
     this.post({ type: 'set', playing: this._playing, rate: this._rate, keylock: this.keylock });
     return this.node;
   }
-  post(m, transfer) { if (this.port) this.port.postMessage(m, transfer || []); else if (this.dsp) this.dsp.handle(m); }
+  post(m, transfer) {
+    m.seq = this.sent = (this.sent || 0) + 1;
+    if (this.port) this.port.postMessage(m, transfer || []); else if (this.dsp) this.dsp.handle(m);
+  }
+  // Reports from the engine; one sent before our latest command would undo it (the
+  // play button and waveform flicker), so only reports that have seen it count.
   update(st) {
+    if ((st.seq || 0) < (this.sent || 0)) return;
     const wasEnded = this.st.ended;
     this.st = st;
-    this._playing = st.playing || (this._playing && this.scratching);
     if (st.ended && !wasEnded) { this._playing = false; this.handlers.ended.forEach(f => f()); }
   }
   addEventListener(type, f) { (this.handlers[type] = this.handlers[type] || []).push(f); }
@@ -302,7 +307,12 @@ class Player {
     this.post({ type: 'set', playing: true });
     return Promise.resolve();
   }
-  pause() { this._playing = false; this.st = { ...this.st, pos: this.currentTime, playing: false, t: ctx ? ctx.currentTime : 0 }; this.post({ type: 'set', playing: false }); }
+  pause() {
+    // Stop where the display says we are, so the engine and the UI agree and play resumes there.
+    const at = this.currentTime;
+    this._playing = false; this.st = { ...this.st, pos: at, playing: false, t: ctx ? ctx.currentTime : 0 };
+    this.post({ type: 'set', playing: false }); this.post({ type: 'seek', pos: at });
+  }
   get playbackRate() { return this._rate; }
   set playbackRate(r) { if (r === this._rate) return; this.st = { ...this.st, pos: this.currentTime, t: ctx ? ctx.currentTime : 0, rate: this.st.playing ? r : 0 }; this._rate = r; this.post({ type: 'set', rate: r }); }
   set preservesPitch(b) { this.keylock = b; this.post({ type: 'set', keylock: b }); }
@@ -362,7 +372,7 @@ class Deck {
     this.track = null; this.cue = 0; this.hot = Array(8).fill(null);
     this.bpm = 0; this.firstBeat = 0; this.tempo = 0; this.keyLock = true; this.synced = false; this.isMaster = false;
     this.loop = null; this.loopBeats = 4; this.manualIn = null; this.mode = 'hot'; this.wave = null; this.bend = 0;
-    this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = [];
+    this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = []; this.scratching = false;
     this.stemOn = { vocals: true, other: true, bass: true, drums: true }; this.stemsReady = false;
     this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
     this.color = letter === 'A' ? '#2d7ff9' : '#e8a13a';
@@ -812,7 +822,8 @@ class Deck {
     if (this.bend && !this.scratching && now - (this.lastJogMove || 0) > 80) { this.bend = 0; el.playbackRate = this.rate; }
     const playing = !el.paused && !this.scratching;
     this.root.classList.toggle('playing', playing);
-    if (!this.previewing) this.ui.play.classList.toggle('lit', playing || (this.scratching && this.ui.play.classList.contains('lit')));
+    // toggle() with an undefined force flips the class, so always pass a real boolean.
+    if (!this.previewing) this.ui.play.classList.toggle('lit', playing || (!!this.scratching && this.ui.play.classList.contains('lit')));
     this.ui.elapsed.textContent = fmtTenths(t);
     this.ui.remain.textContent = '-' + fmtTenths(dur - t);
     this.ui.jogTime.textContent = fmt(t);

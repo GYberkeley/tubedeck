@@ -251,6 +251,22 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(pg.evaluate("decks.A.el.kind"), "scriptprocessor")
         pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
         pg.wait_for_function("decks.A.el.currentTime > 0.8")
+        # The play button stays lit and the position only moves forward while playing.
+        flicker = pg.evaluate("""() => new Promise(done => {
+            let n = 0, unlit = 0, back = 0, last = decks.A.el.currentTime;
+            (function f() {
+                if (!decks.A.ui.play.classList.contains('lit')) unlit++;
+                const t = decks.A.el.currentTime; if (t < last - 0.001) back++; last = t;
+                if (++n < 90) requestAnimationFrame(f); else done({unlit, back});
+            })();
+        })""")
+        self.assertEqual(flicker, {"unlit": 0, "back": 0})
+        # ...and stays unlit, without blinking, once paused.
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
+        lit = pg.evaluate("""() => new Promise(done => { let n = 0, lit = 0;
+            (function f() { if (decks.A.ui.play.classList.contains('lit')) lit++; if (++n < 30) requestAnimationFrame(f); else done(lit); })(); })""")
+        self.assertEqual(lit, 0)
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
         pg.evaluate("decks.A.el.currentTime = 10")
         pg.wait_for_function("decks.A.el.currentTime > 10.2 && decks.A.el.currentTime < 12")
         pg.click(".deck[data-deck=A] .loop-len")  # 4-beat loop = 2 s

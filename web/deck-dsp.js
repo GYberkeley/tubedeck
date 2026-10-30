@@ -29,6 +29,7 @@ class DeckDSP {
   }
 
   handle(m) {
+    if (m.seq) this.seq = m.seq;
     switch (m.type) {
       case 'load': {
         const keep = m.keepPos ? this.pos : 0;
@@ -63,7 +64,8 @@ class DeckDSP {
     }
   }
 
-  state() { return { pos: this.pos / this.sr, playing: this.playing && !this.scratching, ended: this.ended, rate: this.effectiveRate() }; }
+  // seq echoes the last command handled, so the page can drop reports older than its latest command.
+  state() { return { pos: this.pos / this.sr, playing: this.playing && !this.scratching, ended: this.ended, rate: this.effectiveRate(), seq: this.seq || 0 }; }
   effectiveRate() { return this.scratching ? this.vel : (this.playing ? this.rate : 0); }
   resetStretch() { this.ws = null; this.fifoN = 0; this.olaL.fill(0); this.olaR.fill(0); }
 
