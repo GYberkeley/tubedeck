@@ -52,8 +52,9 @@ AUDIO_TYPES = {".m4a": "audio/mp4", ".webm": "audio/webm", ".mp3": "audio/mpeg",
 
 
 def find_audio(video_id):
-    for p in CACHE.glob(f"{video_id}.*"):
-        if p.suffix in AUDIO_TYPES:
+    for ext in AUDIO_TYPES:
+        p = CACHE / f"{video_id}{ext}"
+        if p.exists():
             return p
     return None
 
@@ -241,7 +242,10 @@ def ytdlp_search(q):
                 "duration": e.get("duration"),
                 "thumbnail": f"https://i.ytimg.com/vi/{e.get('id')}/mqdefault.jpg"}
                for e in json.loads(out).get("entries", []) if VIDEO_ID.match(e.get("id") or "")]
-    search_cache[key] = (time.time(), results)
+    now = time.time()
+    for k in [k for k, (t, _) in search_cache.items() if t < now - SEARCH_TTL_S]:
+        del search_cache[k]
+    search_cache[key] = (now, results)
     return results
 
 
@@ -297,9 +301,9 @@ class Handler(SimpleHTTPRequestHandler):
             audio = [p for p in CACHE.iterdir() if p.suffix in AUDIO_TYPES and VIDEO_ID.match(p.stem)]
             audio.sort(key=lambda p: p.stat().st_mtime, reverse=True)
             return self._json({"tracks": [read_meta(p.stem) for p in audio]})
-        m = re.match(r"^/api/audio/([A-Za-z0-9_-]{11})$", path)
-        if m:
-            return self._send_audio(m.group(1))
+        vid = path.removeprefix("/api/audio/")
+        if vid != path and VIDEO_ID.match(vid):
+            return self._send_audio(vid)
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):

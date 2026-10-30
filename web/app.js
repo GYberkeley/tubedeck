@@ -116,6 +116,8 @@ class Deck {
     this.track = null; this.cue = 0; this.hot = Array(8).fill(null);
     this.bpm = 0; this.tempo = 0; this.keyLock = true; this.synced = false;
     this.loop = null; this.mode = 'hot'; this.peaks = null; this.bend = 0; this.lastJogMove = 0;
+    this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
+    this.lastDraw = '';
     this.color = letter === 'A' ? '#3fb6ff' : '#ff8a3d';
     this.bindUi();
   }
@@ -173,11 +175,18 @@ class Deck {
       this.bpm = Math.round(this.bpm * +b.dataset.f * 10) / 10;
       this.renderBpm();
       if (this.synced) this.sync(true);
-      for (const d of Object.values(decks)) if (d !== this && d.synced) d.sync(true);
+      this.notifyFollowers();
     }));
     this.bindJog();
     this.bindOverview();
     this.renderPads();
+    // Layout sizes change only on resize, so measure them there instead of every frame.
+    this.size = { jog: 0, w: 0, h: 0 };
+    new ResizeObserver(() => {
+      this.size = { jog: this.ui.jog.clientHeight, w: this.ui.canvas.clientWidth, h: this.ui.canvas.clientHeight };
+      this.ui.dot.style.transformOrigin = `4px ${this.size.jog * 0.44}px`;
+      this.lastDraw = '';
+    }).observe(this.root);
     this.el.addEventListener('ended', () => this.ui.play.classList.remove('lit'));
   }
 
@@ -241,11 +250,20 @@ class Deck {
   }
 
   setTempo(pct) {
+    this.applyTempo(pct);
+    this.notifyFollowers();
+  }
+
+  // Updates this deck's tempo and display without re-syncing the other deck.
+  applyTempo(pct) {
     this.tempo = clamp(pct, -8, 8);
     this.ui.tempo.value = this.tempo;
     this.ui.tempoVal.textContent = (this.tempo > 0 ? '+' : '') + this.tempo.toFixed(1) + '%';
     this.el.playbackRate = this.rate * (1 + this.bend);
     this.renderBpm();
+  }
+
+  notifyFollowers() {
     for (const d of Object.values(decks)) if (d !== this && d.synced) d.sync(true);
   }
 
@@ -258,10 +276,8 @@ class Deck {
     const pct = options.reduce((a, b) => Math.abs(b) < Math.abs(a) ? b : a);
     if (Math.abs(pct) > 8) { if (!silent) this.setState(`Too far apart to sync within ±8% (${this.bpm} vs ${other.liveBpm.toFixed(1)}).`); return; }
     this.synced = true;
-    this.tempo = pct; this.ui.tempo.value = pct;
-    this.ui.tempoVal.textContent = (pct > 0 ? '+' : '') + pct.toFixed(1) + '%';
-    this.el.playbackRate = this.rate * (1 + this.bend);
-    this.renderBpm(); this.renderSync();
+    this.applyTempo(pct);
+    this.renderSync();
     if (!silent) this.setState('');
   }
   renderSync() { this.ui.sync.classList.toggle('on', this.synced); }
@@ -354,7 +370,6 @@ class Deck {
     this.ui.elapsed.textContent = fmt(t);
     this.ui.remain.textContent = '-' + fmt(dur - t);
     this.ui.dot.style.transform = `rotate(${(t / SECONDS_PER_JOG_TURN) * 360}deg)`;
-    this.ui.dot.style.transformOrigin = `4px ${this.ui.jog.clientHeight / 2 - this.ui.jog.clientHeight * 0.06}px`;
     this.draw(t, dur);
     if (this.chain) {
       this.chain.meter.getFloatTimeDomainData(this.chain.buf);
@@ -366,7 +381,11 @@ class Deck {
 
   draw(t, dur) {
     const cv = this.ui.canvas, dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
+    const w = this.size.w * dpr, h = this.size.h * dpr;
+    // Skip redrawing a waveform that would come out identical (e.g. a paused deck).
+    const key = [t, dur, w, h, !!this.peaks, this.cue, this.loop && `${this.loop.start}-${this.loop.end}`, this.hot.join()].join('|');
+    if (key === this.lastDraw) return;
+    this.lastDraw = key;
     if (cv.width !== w) cv.width = w;
     if (cv.height !== h) cv.height = h;
     const g = cv.getContext('2d');
@@ -403,7 +422,10 @@ const mixer = {
       const root = $(`.channel[data-ch=${L}]`);
       root.append($('#channelTpl').content.cloneNode(true));
       $('.ch-label', root).textContent = L;
-      this.channels[L] = { root, fill: $('.meter-fill', root) };
+      this.channels[L] = {
+        root, fill: $('.meter-fill', root), cfx: $('.cfx', root), fader: $('.chfader', root),
+        eq: { low: $('.eq[data-band=low]', root), mid: $('.eq[data-band=mid]', root), high: $('.eq[data-band=high]', root) },
+      };
       root.querySelectorAll('input').forEach(i => i.addEventListener('input', () => this.apply()));
       root.querySelectorAll('.eq, .cfx').forEach(i => i.addEventListener('dblclick', () => { i.value = 0; this.apply(); }));
     }
@@ -417,12 +439,12 @@ const mixer = {
     for (const L of ['A', 'B']) {
       const d = decks[L], c = d && d.chain;
       if (!c) continue;
-      const root = this.channels[L].root, now = ctx.currentTime;
-      for (const band of ['low', 'mid', 'high']) c[band].gain.setTargetAtTime(+$(`.eq[data-band=${band}]`, root).value, now, 0.01);
-      const f = +$('.cfx', root).value;
+      const ui = this.channels[L], now = ctx.currentTime;
+      for (const band of ['low', 'mid', 'high']) c[band].gain.setTargetAtTime(+ui.eq[band].value, now, 0.01);
+      const f = +ui.cfx.value;
       c.lpf.frequency.setTargetAtTime(f < -0.02 ? 20000 * Math.pow(10, f * 3) : 22000, now, 0.01);
       c.hpf.frequency.setTargetAtTime(f > 0.02 ? 20 * Math.pow(10, f * 3) : 10, now, 0.01);
-      c.ch.gain.setTargetAtTime((+$('.chfader', root).value) ** 2, now, 0.01);
+      c.ch.gain.setTargetAtTime((+ui.fader.value) ** 2, now, 0.01);
       c.xf.gain.setTargetAtTime(xg[L], now, 0.01);
     }
   },
@@ -433,6 +455,7 @@ const mixer = {
 const list = $('#list');
 let tab = 'results', results = [], library = [], helperState = { queue: [], downloading: [] };
 const readyIds = () => new Set(library.map(t => t.id));
+const htmlDecoder = document.createElement('textarea');
 
 function linkId(text) {
   const m = text.match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/);
@@ -455,12 +478,14 @@ async function searchWithKey(q, key) {
   v.search = new URLSearchParams({ part: 'contentDetails', id: items.map(i => i.id.videoId).join(','), key });
   const durs = {};
   try { (await (await fetch(v)).json()).items.forEach(i => { durs[i.id] = isoDuration(i.contentDetails.duration); }); } catch {}
-  const decode = s => { const t = document.createElement('textarea'); t.innerHTML = s; return t.value; };
+  const decode = s => { htmlDecoder.innerHTML = s; return htmlDecoder.value; };
   return items.map(i => ({
     id: i.id.videoId, title: decode(i.snippet.title), channel: decode(i.snippet.channelTitle),
     duration: durs[i.id.videoId] ?? null, thumbnail: i.snippet.thumbnails?.medium?.url,
   }));
 }
+
+const helperSearch = async q => (await api('/api/search?q=' + encodeURIComponent(q))).results;
 
 async function search(q) {
   const id = linkId(q);
@@ -471,9 +496,9 @@ async function search(q) {
   try {
     if (key) {
       try { results = await searchWithKey(q, key); }
-      catch (e) { results = (await api('/api/search?q=' + encodeURIComponent(q))).results; flash(`API key search failed (${e.message}). Used the helper instead.`); }
+      catch (e) { results = await helperSearch(q); flash(`API key search failed (${e.message}). Used the helper instead.`); }
     } else {
-      results = (await api('/api/search?q=' + encodeURIComponent(q))).results;
+      results = await helperSearch(q);
     }
   } catch (e) {
     results = [];
@@ -485,8 +510,8 @@ async function search(q) {
 
 function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 
-function stateLabel(id) {
-  if (readyIds().has(id)) return ['ready', 'Ready'];
+function stateLabel(id, ready) {
+  if (ready.has(id)) return ['ready', 'Ready'];
   if (helperState.downloading.includes(id)) return ['', 'Downloading…'];
   const pos = helperState.queue.indexOf(id);
   if (pos >= 0) return ['', `Queued #${pos + 1}`];
@@ -502,8 +527,9 @@ function showTab(name, keepContent) {
     list.innerHTML = `<li class="empty">${name === 'results' ? 'Search for a track to get started.' : 'Nothing downloaded yet. Tracks you load are saved here and never re-downloaded.'}</li>`;
     return;
   }
+  const ready = readyIds();
   list.innerHTML = items.map(t => {
-    const [cls, label] = stateLabel(t.id);
+    const [cls, label] = stateLabel(t.id, ready);
     return `<li data-id="${escapeHtml(t.id)}">
       <img src="${escapeHtml(t.thumbnail || `https://i.ytimg.com/vi/${encodeURIComponent(t.id)}/mqdefault.jpg`)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
       <div class="meta"><div class="t">${escapeHtml(t.title)}</div><div class="c">${escapeHtml(t.channel)}</div></div>
