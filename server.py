@@ -10,11 +10,13 @@ Every YouTube request goes through one throttled queue:
 """
 
 import json
+import math
 import os
 import re
 import secrets
 import socket
 import subprocess
+import sys
 import threading
 import time
 from collections import deque
@@ -75,15 +77,27 @@ class Throttle:
     def __init__(self):
         self.lock = threading.Lock()
         self.state_file = HOME / "throttle.json"
-        s = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
-        self.last_end = s.get("last_end", 0.0)
-        self.recent = deque(t for t in s.get("recent", []) if t > time.time() - 3600)
-        self.cooldown_until = s.get("cooldown_until", 0.0)
+        self.last_end, self.recent, self.cooldown_until = 0.0, deque(), 0.0
+        try:
+            s = json.loads(self.state_file.read_text())
+            recent = deque(t for t in map(float, s.get("recent", [])) if t > time.time() - 3600)
+            self.last_end, self.recent, self.cooldown_until = \
+                float(s.get("last_end", 0.0)), recent, float(s.get("cooldown_until", 0.0))
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError, AttributeError) as e:
+            print(f"tubedeck: ignoring unreadable {self.state_file}: {e}", file=sys.stderr)
 
     def _save(self):
-        self.state_file.write_text(json.dumps({
-            "last_end": self.last_end, "recent": list(self.recent),
-            "cooldown_until": self.cooldown_until}))
+        """Best effort: a failed write must never leave the lock held. Atomic, so a kill can't truncate it."""
+        tmp = self.state_file.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps({
+                "last_end": self.last_end, "recent": list(self.recent),
+                "cooldown_until": self.cooldown_until}))
+            os.replace(tmp, self.state_file)
+        except OSError as e:
+            print(f"tubedeck: couldn't save throttle state: {e}", file=sys.stderr)
 
     def wait_time(self):
         now = time.time()
@@ -94,10 +108,11 @@ class Throttle:
             waits.append(self.recent[0] + 3600 - now)
         return max(0.0, *waits)
 
-    def acquire(self, max_wait=None):
+    def acquire(self, max_wait=None, skip=None):
         """Block until a YouTube job may start; holds the lock for the job.
 
         With max_wait, gives up (returns False) rather than waiting longer than that.
+        With skip, returns None (lock released, nothing counted) if skip() is true once the slot is free.
         """
         deadline = None if max_wait is None else time.time() + max_wait
         if not self.lock.acquire(timeout=-1 if max_wait is None else max_wait):
@@ -107,20 +122,27 @@ class Throttle:
                 self.lock.release()
                 return False
             time.sleep(min(w, 5))
+        if skip and skip():
+            self.lock.release()
+            return None
         self.recent.append(time.time())
         self._save()
         return True
 
     def release(self, blocked=False):
-        self.last_end = time.time()
-        if blocked:
-            self.cooldown_until = self.last_end + COOLDOWN_S
-        self._save()
-        self.lock.release()
+        try:
+            self.last_end = time.time()
+            if blocked:
+                self.cooldown_until = self.last_end + COOLDOWN_S
+            self._save()
+        finally:
+            self.lock.release()
 
     def status(self):
+        cutoff = time.time() - 3600
         return {"cooldownSeconds": max(0, int(self.cooldown_until - time.time())),
-                "jobsLastHour": len(self.recent), "maxJobsPerHour": MAX_JOBS_PER_HOUR}
+                "jobsLastHour": sum(t > cutoff for t in list(self.recent)),
+                "maxJobsPerHour": MAX_JOBS_PER_HOUR}
 
 
 throttle = Throttle()
@@ -135,18 +157,26 @@ class Busy(Exception):
     pass
 
 
-def run_ytdlp(args, timeout, max_wait=None):
-    """Run yt-dlp through the throttle. Returns (ok, stdout, stderr); raises Busy past max_wait."""
-    if not throttle.acquire(max_wait):
+def run_ytdlp(args, timeout, max_wait=None, skip=None):
+    """Run yt-dlp through the throttle. Returns (ok, stdout, stderr); raises Busy past max_wait.
+
+    Returns None without running if skip() is true once the throttle slot is free.
+    """
+    got = throttle.acquire(max_wait, skip)
+    if got is None:
+        return None
+    if not got:
         raise Busy()
     blocked = False
     try:
         p = subprocess.run([YTDLP, "--ignore-config", "--no-cookies", "--no-cookies-from-browser", *args],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, errors="replace", timeout=timeout)
         blocked = looks_blocked(p.stderr)
         return p.returncode == 0, p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         return False, "", "yt-dlp timed out"
+    except OSError as e:
+        return False, "", str(e)
     finally:
         throttle.release(blocked)
 
@@ -197,44 +227,59 @@ class Downloader:
                     self.cv.wait()
                 vid = self.queue.popleft()
                 self.jobs[vid]["state"] = "downloading"
-            ok, out, err = run_ytdlp([
-                "-t", "sleep", "--no-playlist", "--no-progress",
-                "-f", "bestaudio[ext=m4a]/bestaudio",
-                "--no-write-subs", "--no-write-thumbnail", "--no-write-info-json",
-                "-o", str(CACHE / "%(id)s.%(ext)s"),
-                "--no-simulate",
-                "-O", "%(.{id,title,channel,duration,thumbnail})j",
-                f"https://www.youtube.com/watch?v={vid}",
-            ], timeout=15 * 60)
-            with self.cv:
-                if ok and find_audio(vid):
-                    try:
-                        meta = json.loads(out.strip().splitlines()[0])
-                    except (ValueError, IndexError):
-                        meta = {"id": vid}
-                    (CACHE / f"{vid}.json").write_text(json.dumps(meta))
-                    self.jobs.pop(vid, None)
-                else:
-                    msg = "YouTube asked for a bot check; pausing downloads for 30 minutes." \
-                        if looks_blocked(err) else (err.strip().splitlines() or ["download failed"])[-1]
-                    self.jobs[vid] = {"state": "error", "error": msg[:300]}
+            try:
+                ok, out, err = run_ytdlp([
+                    "-t", "sleep", "--no-playlist", "--no-progress",
+                    "-f", "bestaudio[ext=m4a]/bestaudio",
+                    "--no-write-subs", "--no-write-thumbnail", "--no-write-info-json",
+                    "-o", str(CACHE / "%(id)s.%(ext)s"),
+                    "--no-simulate",
+                    "-O", "%(.{id,title,channel,duration,thumbnail})j",
+                    f"https://www.youtube.com/watch?v={vid}",
+                ], timeout=15 * 60)
+                with self.cv:
+                    if ok and find_audio(vid):
+                        try:
+                            meta = json.loads(out.strip().splitlines()[0])
+                        except (ValueError, IndexError):
+                            meta = {"id": vid}
+                        (CACHE / f"{vid}.json").write_text(json.dumps(meta))
+                        self.jobs.pop(vid, None)
+                    else:
+                        msg = "YouTube asked for a bot check; pausing downloads for 30 minutes." \
+                            if looks_blocked(err) else (err.strip().splitlines() or ["download failed"])[-1]
+                        self.jobs[vid] = {"state": "error", "error": msg[:300]}
+            except Exception as e:  # this is the only download thread, so it must outlive any one job
+                with self.cv:
+                    self.jobs[vid] = {"state": "error", "error": (str(e) or "download failed")[:300]}
 
 
 downloader = Downloader()
 search_cache = {}
 
 
+def cached_search(key):
+    hit = search_cache.get(key)
+    return hit[1] if hit and hit[0] > time.time() - SEARCH_TTL_S else None
+
+
 def ytdlp_search(q):
     key = q.strip().lower()
-    hit = search_cache.get(key)
-    if hit and hit[0] > time.time() - SEARCH_TTL_S:
-        return hit[1]
+    if (hit := cached_search(key)) is not None:
+        return hit
     try:
-        ok, out, err = run_ytdlp(["--flat-playlist", "--sleep-requests", "0.75", "-J",
-                                  f"ytsearch15:{q}"], timeout=60, max_wait=SEARCH_WAIT_S)
+        res = run_ytdlp(["--flat-playlist", "--sleep-requests", "0.75", "-J", f"ytsearch15:{q}"],
+                        timeout=60, max_wait=SEARCH_WAIT_S, skip=lambda: cached_search(key) is not None)
     except Busy:
+        left = throttle.cooldown_until - time.time()
+        if left > 0:
+            raise RuntimeError(f"YouTube asked for a bot check, so searching is paused for {math.ceil(left / 60)} "
+                               "more minutes. Add your own API key in Settings to search in the meantime.")
         raise RuntimeError("The helper is busy downloading (YouTube requests are spaced out). "
                            "Try the search again in a moment, or add your own API key in Settings.")
+    if res is None:  # the same search finished while this one waited for the throttle
+        return cached_search(key) or []
+    ok, out, err = res
     if not ok:
         raise RuntimeError("YouTube asked for a bot check; search is paused for a while."
                            if looks_blocked(err) else "search failed")

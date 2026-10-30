@@ -4,6 +4,8 @@ A fake yt-dlp script stands in for YouTube, so these run offline and fast:
     python3 -m unittest discover -s tests
 """
 
+import contextlib
+import io
 import json
 import os
 import shutil
@@ -15,7 +17,9 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from collections import deque
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 TMP = Path(tempfile.mkdtemp(prefix="tubedeck-test-"))
@@ -191,6 +195,103 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(code, 503)
         self.assertIn("busy", json.loads(body)["error"])
         self.wait_ready("slowTest001")
+
+    def test_hourly_cap_blocks_new_youtube_requests(self):
+        t = server.throttle
+        now = time.time()
+        with t.lock:
+            saved = deque(t.recent)
+            t.recent.clear()
+            t.recent.extend([now - 4000] + [now] * server.MAX_JOBS_PER_HOUR)
+        try:
+            self.assertEqual(t.status()["jobsLastHour"], server.MAX_JOBS_PER_HOUR)  # stale entry not counted
+            self.assertGreater(t.wait_time(), server.MIN_GAP_S)
+            before = len(calls())
+            t0 = time.time()
+            code, _, body = self.req("/api/search?q=over+the+cap")
+            self.assertLess(time.time() - t0, 1.5)
+            self.assertEqual(code, 503)
+            self.assertEqual(len(calls()), before)
+        finally:
+            with t.lock:
+                t.recent.clear()
+                t.recent.extend(x for x in saved if x > time.time() - 3600)
+                t._save()
+
+    def test_search_during_cooldown_says_so(self):
+        with server.throttle.lock:
+            server.throttle.cooldown_until = time.time() + 10 * 60
+        try:
+            code, _, body = self.req("/api/search?q=during+cooldown")
+            self.assertEqual(code, 503)
+            self.assertIn("10 more minutes", json.loads(body)["error"])
+        finally:
+            with server.throttle.lock:
+                server.throttle.cooldown_until = 0
+                server.throttle._save()
+
+    def test_identical_searches_share_one_youtube_request(self):
+        time.sleep(server.MIN_GAP_S)
+        before = len(calls())
+        out = []
+        with mock.patch.object(server, "SEARCH_WAIT_S", 5):
+            ts = [threading.Thread(target=lambda: out.append(self.req("/api/search?q=same+time")))
+                  for _ in range(2)]
+            for th in ts:
+                th.start()
+            for th in ts:
+                th.join()
+        self.assertEqual([r[0] for r in out], [200, 200])
+        self.assertEqual(out[0][2], out[1][2])
+        self.assertEqual(len(calls()), before + 1)
+
+    def test_missing_ytdlp_fails_the_job_not_the_queue(self):
+        with mock.patch.object(server, "YTDLP", str(TMP / "no-such-yt-dlp")):
+            self.req("/api/fetch?id=noYtdlp0001", "POST")
+            st = self.wait_ready("noYtdlp0001")
+        self.assertEqual(st["state"], "error")
+        self.req("/api/fetch?id=afterMiss01", "POST")
+        self.assertEqual(self.wait_ready("afterMiss01")["state"], "ready")
+
+    def test_download_thread_survives_unexpected_errors(self):
+        vid = "metaFail001"
+        meta = server.CACHE / f"{vid}.json"
+        meta.mkdir()  # makes writing the track's metadata fail
+        try:
+            self.req(f"/api/fetch?id={vid}", "POST")
+            end = time.time() + 15
+            while time.time() < end:
+                with server.downloader.cv:
+                    if server.downloader.jobs.get(vid, {}).get("state") == "error":
+                        break
+                time.sleep(0.1)
+            else:
+                self.fail("job never failed")
+        finally:
+            meta.rmdir()
+        self.req("/api/fetch?id=afterErr001", "POST")
+        self.assertEqual(self.wait_ready("afterErr001")["state"], "ready")
+
+    def test_unwritable_throttle_state_does_not_wedge_the_queue(self):
+        err = io.StringIO()
+        with mock.patch.object(server.throttle, "state_file", TMP / "no-such-dir" / "throttle.json"), \
+                contextlib.redirect_stderr(err):
+            for vid in ["noSave00001", "noSave00002"]:
+                self.req(f"/api/fetch?id={vid}", "POST")
+                self.assertEqual(self.wait_ready(vid)["state"], "ready")
+        self.assertIn("couldn't save throttle state", err.getvalue())
+
+    def test_corrupt_throttle_state_is_ignored(self):
+        home = TMP / "corrupt-home"
+        home.mkdir()
+        (home / "throttle.json").write_text('{"recent": [1, 2')
+        with mock.patch.object(server, "HOME", home), contextlib.redirect_stderr(io.StringIO()):
+            t = server.Throttle()
+            self.assertEqual((t.last_end, list(t.recent), t.cooldown_until), (0.0, [], 0.0))
+            t.acquire()
+            t.release()
+        self.assertEqual(len(json.loads((home / "throttle.json").read_text())["recent"]), 1)
+        self.assertFalse((home / "throttle.tmp").exists())
 
     def test_pairing_code_is_redacted_from_logs(self):
         line = server.redact(f'"GET /api/audio/x?t={server.TOKEN} HTTP/1.1" 206 -')
