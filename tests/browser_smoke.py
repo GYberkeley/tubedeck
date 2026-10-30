@@ -54,7 +54,8 @@ import json, re, shutil, sys
 args = sys.argv[1:]
 target = args[-1]
 if target.startswith("ytsearch"):
-    print(json.dumps({{"entries": [{{"id": "kickTrack01", "title": "Kick Test 120", "channel": "tubedeck", "duration": 40}}]}}))
+    q = target.split(":", 1)[1]
+    print(json.dumps({{"entries": [{{"id": "kickTrack01", "title": f"Kick Test 120 ({{q}})", "channel": "tubedeck", "duration": 40}}]}}))
     sys.exit(0)
 vid = re.search(r"v=([A-Za-z0-9_-]{{11}})", target).group(1)
 shutil.copy({str(FIXTURE)!r}, args[args.index("-o") + 1].replace("%(id)s", vid).replace("%(ext)s", "m4a"))
@@ -140,6 +141,11 @@ class BrowserSmoke(unittest.TestCase):
         pg.click(".deck[data-deck=B] .sync")
         self.assertAlmostEqual(pg.evaluate("decks.B.liveBpm"), pg.evaluate("decks.A.liveBpm"), delta=0.05)
 
+        # Reloading deck A re-matches deck B, which follows it.
+        pg.evaluate("decks.B.applyTempo(0)")
+        pg.click("#list li[data-id=kickTrack01] .load.a")
+        pg.wait_for_function("decks.A.bpm > 0 && Math.abs(decks.B.liveBpm - decks.A.liveBpm) < 0.05", timeout=20000)
+
         # Crossfader is equal-power.
         pg.fill("#xfader", "1")
         pg.dispatch_event("#xfader", "input")
@@ -148,6 +154,23 @@ class BrowserSmoke(unittest.TestCase):
         self.assertGreater(pg.evaluate("decks.B.chain.xf.gain.value"), 0.95)
         # Thumbnails for the fake video ids 404 on YouTube's image server; anything else is a bug.
         self.assertEqual([e for e in self.errors if "i.ytimg.com" not in e], [])
+
+    def test_slow_older_search_does_not_overwrite_newer(self):
+        pg = self.page()
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        # Hold back the first search's response so it lands after the second one.
+        pg.evaluate("""() => {
+            const real = window.fetch;
+            window.fetch = async (u, o) => {
+                const r = await real(u, o);
+                if (String(u).includes('q=first')) await new Promise(ok => setTimeout(ok, 1500));
+                return r;
+            };
+            search('first'); search('second');
+        }""")
+        pg.wait_for_selector("#list li[data-id=kickTrack01]")
+        pg.wait_for_timeout(2000)
+        self.assertIn("(second)", pg.inner_text("#list li[data-id=kickTrack01] .t"))
 
     def test_settings_enter_saves_and_pairing_prompt_opens_once(self):
         pg = self.page(token=False)

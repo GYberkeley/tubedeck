@@ -19,7 +19,10 @@ const store = {
 const token = () => store.get('token');
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'X-Tubedeck-Token': token(), ...(opts.headers || {}) } });
+  const signal = typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(15000) : undefined;
+  let res;
+  try { res = await fetch(path, { signal, ...opts, headers: { 'X-Tubedeck-Token': token(), ...(opts.headers || {}) } }); }
+  catch (e) { throw e.name === 'TimeoutError' ? new Error('The helper did not answer. Is it still running?') : e; }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw Object.assign(new Error(data.error || `Helper error ${res.status}`), { status: res.status });
   return data;
@@ -222,6 +225,7 @@ class Deck {
       this.setState('');
       this.renderBpm();
       if (this.synced) this.sync();
+      this.notifyFollowers();
     } catch (e) {
       this.setState('Could not analyze this track (it will still play).');
     }
@@ -230,7 +234,11 @@ class Deck {
   togglePlay() {
     if (!this.track) return;
     audio();
-    if (this.el.paused) { this.el.play().catch(() => this.setState('Tap play again to start audio.')); this.ui.play.classList.add('lit'); }
+    if (this.el.paused) {
+      // AbortError means a pause() or new src interrupted play on purpose; not a failure.
+      this.el.play().catch(e => { if (e.name !== 'AbortError') { this.setState('Tap play again to start audio.'); this.ui.play.classList.remove('lit'); } });
+      this.ui.play.classList.add('lit');
+    }
     else { this.el.pause(); this.ui.play.classList.remove('lit'); }
   }
 
@@ -314,18 +322,20 @@ class Deck {
 
   bindJog() {
     const ring = this.ui.jog;
-    let last = null, lastT = 0;
+    // One finger drives the wheel; others are ignored until it lifts.
+    let active = null, last = null, lastT = 0;
     const angle = e => {
       const b = ring.getBoundingClientRect();
       return Math.atan2(e.clientY - (b.top + b.height / 2), e.clientX - (b.left + b.width / 2));
     };
     ring.addEventListener('pointerdown', e => {
-      if (!this.track) return;
+      if (!this.track || active != null) return;
+      active = e.pointerId;
       ring.setPointerCapture(e.pointerId); ring.classList.add('touched');
       last = angle(e); lastT = performance.now();
     });
     ring.addEventListener('pointermove', e => {
-      if (last == null) return;
+      if (e.pointerId !== active || last == null) return;
       const a = angle(e), now = performance.now();
       let d = a - last; if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI;
       const dt = Math.max(1, now - lastT) / 1000;
@@ -338,8 +348,9 @@ class Deck {
         this.el.playbackRate = this.rate * (1 + this.bend);
       }
     });
-    const end = () => {
-      last = null; ring.classList.remove('touched');
+    const end = e => {
+      if (e.pointerId !== active) return;
+      active = null; last = null; ring.classList.remove('touched');
       this.bend = 0; this.el.playbackRate = this.rate;
     };
     ring.addEventListener('pointerup', end); ring.addEventListener('pointercancel', end);
@@ -487,24 +498,36 @@ async function searchWithKey(q, key) {
 
 const helperSearch = async q => (await api('/api/search?q=' + encodeURIComponent(q))).results;
 
+// Each search bumps this; a response from an older search is dropped.
+let searchSeq = 0;
 async function search(q) {
+  const seq = ++searchSeq;
   const id = linkId(q);
   if (id) { results = [{ id, title: 'YouTube video ' + id, channel: 'Pasted link', thumbnail: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` }]; return showTab('results'); }
   list.innerHTML = '<li class="empty">Searching…</li>';
   showTab('results', true);
   const key = store.get('ytKey');
+  let found;
   try {
     if (key) {
-      try { results = await searchWithKey(q, key); }
-      catch (e) { results = await helperSearch(q); flash(`API key search failed (${e.message}). Used the helper instead.`); }
+      try { found = await searchWithKey(q, key); }
+      catch (e) {
+        if (seq !== searchSeq) return;
+        found = await helperSearch(q);
+        if (seq !== searchSeq) return;
+        flash(`API key search failed (${e.message}). Used the helper instead.`);
+      }
     } else {
-      results = await helperSearch(q);
+      found = await helperSearch(q);
     }
   } catch (e) {
+    if (seq !== searchSeq) return;
     results = [];
     list.innerHTML = `<li class="empty">${escapeHtml(e.message)}</li>`;
     return;
   }
+  if (seq !== searchSeq) return;
+  results = found;
   showTab('results');
 }
 
@@ -570,6 +593,7 @@ async function loadOnDeck(L, meta) {
     }
     if (d.pending !== meta.id) return;
     await refreshLibrary();
+    if (d.pending !== meta.id) return;
     d.load({ ...meta, ...st });
   } catch (e) { d.setState(e.message); }
 }
