@@ -426,13 +426,18 @@ class BrowserSmoke(unittest.TestCase):
     def test_themes(self):
         """Each theme applies its colours to the canvases, keeps the layout intact and is remembered."""
         pg = self.page()
-        for theme in ["forest", "waterfall", "meadow", "ocean", "desert", "snow", "classic"]:
+        for theme in ["forest", "waterfall", "meadow", "ocean", "desert", "snow", "space", "rainforest", "alps",
+                      "hakone", "wulong", "chongqing", "timessquare", "aurora", "classic"]:
             pg.select_option("#themeSel", theme)
             self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), theme)
             colours = pg.evaluate("[THEME.low, THEME.A, decks.A.color]")
             self.assertTrue(all(colours) and colours[1] == colours[2], f"{theme}: {colours}")
             self.assertLessEqual(pg.evaluate("document.documentElement.scrollWidth - innerWidth"), 0)
             self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('.scene.front')).pointerEvents"), "none")
+            # Shader scenes must compile (a GLSL error would leave the band blank).
+            if pg.evaluate(f"!!SCENES['{theme}']"):
+                pg.wait_for_timeout(100)
+                self.assertTrue(pg.evaluate(f"!vista.gl || !!vista.program('{theme}')"), f"{theme}: shader failed to compile")
         pg.select_option("#themeSel", "meadow")
         pg.reload()
         self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")

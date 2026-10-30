@@ -1041,80 +1041,57 @@ function applyTheme(name) {
   store.set('theme', name);
   const css = getComputedStyle(document.documentElement), v = k => css.getPropertyValue(k).trim();
   Object.assign(THEME, { low: v('--wave-low'), mid: v('--wave-mid'), high: v('--wave-high'), playhead: v('--playhead'), A: v('--deck-a'), B: v('--deck-b'), halo: v('--wave-halo') });
-  water.setActive(name === 'waterfall');
+  vista.setActive(name);
   for (const d of Object.values(decks)) { d.color = THEME[d.letter]; d.overviewImg = null; }
   $('#themeSel').value = name;
 }
-// Waterfall: the band is rendered by a fragment shader (on the GPU, one draw call per
-// frame): a misty tree line, a wavy lip where teal water curves over, streaming water
-// that whitens as it falls, and churning foam and mist at the base. Flow follows the BPM.
-const water = {
-  gl: null, prog: null, active: false, t: 0, last: 0,
-  setActive(on) { this.active = on; if (on && !this.gl) this.init(); },
+// Shader scenes (scenes.js) render the waveform band on the GPU: one draw call per
+// frame, so the audio thread is untouched. Each compiles on first use; time advances
+// at the master deck's tempo and `beat` is the master deck's beat phase.
+const vista = {
+  gl: null, progs: {}, scene: null, t: 0, last: 0,
+  setActive(name) {
+    this.scene = SCENES[name] ? name : null;
+    document.documentElement.dataset.scene = this.scene ? 'shader' : '';
+    if (this.scene && !this.gl) this.init();
+  },
   init() {
     const cv = $('.scene.vista .water');
     const gl = cv && cv.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'low-power' });
     if (!gl) return;
-    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
-    const p = gl.createProgram();
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, WATER_SHADER));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.warn('water shader', gl.getProgramInfoLog(p)); return; }
-    gl.useProgram(p);
     gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-    const a = gl.getAttribLocation(p, 'a'); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
-    Object.assign(this, { gl, prog: p, cv, uRes: gl.getUniformLocation(p, 'res'), uT: gl.getUniformLocation(p, 't') });
+    Object.assign(this, { gl, cv });
+  },
+  program(name) {
+    if (this.progs[name] !== undefined) return this.progs[name];
+    const gl = this.gl, sh = (type, src) => { const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x); return x; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
+    const fs = sh(gl.FRAGMENT_SHADER, SCENES[name]);
+    gl.attachShader(p, fs);
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.warn(`scene ${name}:`, gl.getShaderInfoLog(fs) || gl.getProgramInfoLog(p)); return (this.progs[name] = null); }
+    const a = gl.getAttribLocation(p, 'a');
+    return (this.progs[name] = { p, a, res: gl.getUniformLocation(p, 'res'), t: gl.getUniformLocation(p, 't'), beat: gl.getUniformLocation(p, 'beat') });
   },
   draw(now) {
-    if (!this.active || !this.gl) return;
+    if (!this.scene || !this.gl) return;
     const dt = Math.min(0.1, (now - (this.last || now)) / 1000); this.last = now;
-    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!reduce) this.t += dt * (sceneBpm || 120) / 120;
+    if (!matchMedia('(prefers-reduced-motion: reduce)').matches) this.t += dt * (sceneBpm || 120) / 120;
+    const prog = this.program(this.scene);
+    if (!prog) return;
     const { gl, cv } = this, scale = Math.min(1.25, window.devicePixelRatio || 1);
     const w = Math.round(cv.clientWidth * scale), h = Math.round(cv.clientHeight * scale);
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
-    gl.uniform2f(this.uRes, w, h); gl.uniform1f(this.uT, this.t);
+    gl.useProgram(prog.p);
+    gl.enableVertexAttribArray(prog.a); gl.vertexAttribPointer(prog.a, 2, gl.FLOAT, false, 0, 0);
+    const m = masterDeck(), beat = m && m.loaded ? ((((m.el.currentTime - m.firstBeat) / m.beatSec) % 1) + 1) % 1 : (this.t * 2) % 1;
+    gl.uniform2f(prog.res, w, h); gl.uniform1f(prog.t, this.t); gl.uniform1f(prog.beat, beat);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   },
 };
-const WATER_SHADER = `precision mediump float;
-uniform vec2 res; uniform float t;
-float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
-  return mix(mix(hash(i), hash(i + vec2(1., 0.)), f.x), mix(hash(i + vec2(0., 1.)), hash(i + vec2(1., 1.)), f.x), f.y); }
-float fbm(vec2 p){ float v = 0., a = .5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= .5; } return v; }
-void main(){
-  vec2 uv = gl_FragCoord.xy / res; uv.y = 1. - uv.y;
-  float x = uv.x * res.x / res.y;
-  float lip = .2 + .05 * sin(x * .9 + 1.) + .025 * sin(x * 2.7);
-  // misty sky and a soft tree line above the lip
-  vec3 col = mix(vec3(.86, .93, .94), vec3(.7, .82, .84), uv.y / lip);
-  float trees = lip - .03 - .07 * fbm(vec2(x * 3., 2.));
-  col = mix(col, vec3(.32, .45, .43), smoothstep(trees, trees + .015, uv.y) * .65);
-  // the falling sheet: streaks stretched vertically, scrolling down and accelerating
-  float fy = max(uv.y - lip, 0.);
-  float drift = fbm(vec2(x * 1.6, t * .15)) * 1.6;
-  float s1 = fbm(vec2(x * 7., fy * 1.4 - t * 1.4 + drift));
-  float s2 = fbm(vec2(x * 18., fy * 3. - t * 2.6));
-  vec3 deep = vec3(.03, .3, .34), teal = vec3(.1, .58, .62), cyan = vec3(.5, .88, .88), white = vec3(.95, .99, .99);
-  vec3 w = mix(deep, teal, smoothstep(.3, .72, s1));
-  w = mix(w, cyan, smoothstep(.55, .9, s2) * .7);
-  w = mix(w, white, smoothstep(.0, .55, fy) * smoothstep(.42, .78, s1) * .85);
-  w += vec3(.4, .45, .45) * exp(-pow((uv.y - lip) * 30., 2.));   // light on the lip
-  col = mix(col, w, smoothstep(lip - .008, lip + .008, uv.y));
-  // churning foam and spray at the base
-  float b1 = fbm(vec2(x * 3.2 + t * .12, uv.y * 2.6 + t * .8));
-  float b2 = fbm(vec2(x * 8. - t * .25, uv.y * 5. + t * 1.4));
-  float foam = smoothstep(.5, .95, uv.y + (b1 - .5) * .55);
-  col = mix(col, mix(vec3(.72, .88, .88), vec3(1.), b2), foam * .95);
-  // mist drifting across
-  float mist = .12 + .22 * fbm(vec2(x * 1.2 - t * .08, uv.y * 1.8 - t * .15));
-  col = mix(col, vec3(.96, 1., 1.), mist * smoothstep(.1, 1., uv.y) * .6);
-  gl_FragColor = vec4(col, 1.);
-}`;
 
 let sceneBpm = 0;
 // The scene breathes with the music: --beat follows the master deck's tempo.
@@ -1486,7 +1463,7 @@ waves.init();
   waves.draw();
   fx.forEach(u => u.retime());
   syncSceneTempo();
-  water.draw(now);
+  vista.draw(now);
   requestAnimationFrame(frame);
 })(performance.now());
 const clock = () => { const d = new Date(); $('#clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
