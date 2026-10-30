@@ -303,7 +303,7 @@
 /* ---------- 3D world themes: the scene fills the screen; the waveform band is clear glass
    over the skyline and the panels are smoked glass cards (no blur, so the scene stays crisp). */
 [data-style="world"] {
-  --panel: rgba(8, 10, 16, .5); --panel-mix: rgba(8, 10, 16, .58); --bar: rgba(6, 7, 12, .72);
+  --panel: rgba(8, 10, 16, .44); --panel-mix: rgba(8, 10, 16, .52); --bar: rgba(6, 7, 12, .72);
   --pad: rgba(255, 255, 255, .07); --panel-2: rgba(255, 255, 255, .09); --panel-3: rgba(255, 255, 255, .15);
   --line: rgba(255, 255, 255, .16); --line-soft: rgba(255, 255, 255, .11);
   --jog-bg: rgba(0, 0, 0, .35); --groove-a: rgba(255, 255, 255, .05); --groove-b: rgba(0, 0, 0, .14);

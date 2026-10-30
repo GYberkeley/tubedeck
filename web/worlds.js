@@ -121,148 +121,182 @@ vec3 shade(vec3 q, vec3 rd, float d){
   else col = sky(rd, ro);
 `),
 
-  // Hakone: a vermilion torii standing in Lake Ashi at dusk, forested shores, Fuji with
-  // its snow cap in alpenglow, the Belt of Venus over the lake, mirror reflections.
+  // Hakone: Lake Ashi on a summer day. A cedar headland whose crowns sway in the wind,
+  // forested ridges in blue haze, the vermilion torii and its railing standing in calm
+  // water that mirrors it all, with cat's-paw ripples drifting across the lake.
   hakone: WORLD(`
-const vec3 SUN = vec3(-.48, .16, -.86);
+const vec3 SUN = vec3(-.42, .6, -.68);
+const float HZK = .27;
+vec3 crownId;
+float shore(vec2 x){ return x.x - (2.3 + .1 * (x.y - 18.) + .7 * sin(x.y * .27)); }
+float crowns(vec2 x){
+  vec2 i = floor(x), f = fract(x); float h = 0.;
+  for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+    vec2 g = vec2(float(k), float(j)), c = i + g, o = vec2(hash(c), hash(c + 7.)) * .7;
+    o.x += .05 * sin(t * 1.1 + hash(c + 5.) * 6.) + .03 * sin(t * 2.3 + c.y);      // wind
+    vec2 d = g + o - f; float r = .55 + .3 * hash(c + 3.);
+    float dome = sqrt(max(r * r - dot(d, d), 0.)) * (1.5 + 1.1 * hash(c + 11.)) * (.8 + .35 * noise(x * 3.3 + c));
+    if (dome > h) { h = dome; crownId = vec3(hash(c + 17.), hash(c + 23.), r); }
+  }
+  return h;
+}
+float hills(vec2 x){
+  float far = smoothstep(30., 44., x.y);
+  return far * (2.2 + 4.2 * fbm(x * .04 + 7.)) - .6 + .12 * noise(x * 1.5);
+}
 float land(vec2 x){
-  float r = length(x - vec2(-5., 56.));
-  float fuji = min(5.6 * pow(clamp(1. - r / 19., 0., 1.), 2.1), 4.9);
-  fuji *= 1. + .05 * (noise(vec2(atan(x.y - 56., x.x + 5.) * 9., r * .4)) - .5);
-  float ridge = fbm(x * .085);
-  float side = smoothstep(4.5, 12., abs(x.x - 1. + 2.5 * sin(x.y * .07)));
-  float hills = (ridge * 3.8 - 1.) * side;
-  float far = smoothstep(24., 32., x.y) * smoothstep(48., 36., x.y) * (ridge * 2.6 - .4);
-  float l = max(hills, far);
-  l += .14 * noise(x * 2.6) * smoothstep(-.1, .3, l);
-  return max(l, fuji);
+  float e = shore(x);
+  float head = smoothstep(-.2, 3.5, e) * smoothstep(9., 13., x.y) * (1.6 + 1.6 * fbm(x * .12)) - .4;
+  if (e > -1.) head += .75 * crowns(x / .62) * smoothstep(-.5, .8, e) * smoothstep(9., 13.5, x.y);
+  return max(head, hills(x));
 }
 float torii(vec3 p, out float black){
-  p -= vec3(3.6, 0., 14.); p.xz = rot(-.35) * p.xz;
-  vec3 q = p; q.x = abs(q.x) - .82;
-  float pil = sdCyl(q.xz, q.y - 1.1, .1 - .012 * q.y, 1.25);
-  float nuki = sdBox(p - vec3(0., 1.86, 0.), vec3(1.16, .055, .04));
-  vec3 k = p - vec3(0., 2.4, 0.); k.y -= .045 * k.x * k.x;
-  float kasa = sdBox(k, vec3(1.5, .07, .11)) - .01;
-  float shim = sdBox(k + vec3(0., .14, 0.), vec3(1.34, .06, .085));
-  float gaku = sdBox(p - vec3(0., 2.1, 0.), vec3(.07, .2, .035));
-  float red = min(min(pil, nuki), min(shim, gaku));
+  p -= vec3(1.05, 0., 19.); p.xz = rot(-.18) * p.xz;
+  vec3 q = p; q.x = abs(q.x) - .62;
+  float pil = sdCyl(q.xz, q.y - 1., .085 - .01 * q.y, 1.25);
+  float nuki = sdBox(p - vec3(0., 1.65, 0.), vec3(.9, .05, .035));
+  vec3 k = p - vec3(0., 2.15, 0.); k.y -= .05 * k.x * k.x;
+  float kasa = sdBox(k, vec3(1.18, .06, .1)) - .01;
+  float shim = sdBox(k + vec3(0., .12, 0.), vec3(1.05, .05, .07));
+  float gaku = sdBox(p - vec3(0., 1.88, 0.), vec3(.06, .17, .03));
+  vec3 f = p - vec3(0., 0., -.55); vec3 fp = f; fp.x = abs(abs(fp.x) - .85) - .38;   // railing in front
+  float posts = sdCyl(fp.xz, fp.y - .45, .04, .55);
+  float rails = min(sdBox(f - vec3(0., .48, 0.), vec3(1.32, .035, .035)), sdBox(f - vec3(0., .92, 0.), vec3(1.32, .035, .035)));
+  float red = min(min(min(pil, nuki), min(shim, gaku)), min(posts, rails));
   black = kasa < red ? 1. : 0.;
   return min(red, kasa);
 }
-float mapH(vec3 q){ float b; return min(torii(q, b), (q.y - land(q.xz)) * .5); }
-${sdfKit('mapH', 150)}
+float mapH(vec3 q){ float b; return min(torii(q, b), (q.y - land(q.xz)) * .26); }
+${sdfKit('mapH', 220)}
 vec3 sky(vec3 rd){
-  float y = rd.y;
-  vec3 c = mix(vec3(.5, .52, .74), vec3(.17, .22, .46), smoothstep(.0, .45, y));
-  c = mix(c, vec3(1.05, .66, .66), exp(-pow((y - .07) * 13., 2.)) * .8);
-  c = mix(c, vec3(.42, .45, .66), smoothstep(.03, .0, y) * .6);
-  if (y > 0.) {
-    vec2 q = rd.xz / (y + .05);
-    float cl = fbm(q * .7 + vec2(t * .01, 0.));
-    c = mix(c, vec3(1.15, .72, .6), smoothstep(.6, .85, cl) * smoothstep(.02, .1, y) * .6);
+  vec3 c = mix(vec3(.84, .9, .94), vec3(.38, .58, .84), smoothstep(0., .5, rd.y));
+  if (rd.y > 0.) {
+    vec2 q = rd.xz / (rd.y + .04);
+    float cl = fbm(q * .6 + vec2(t * .008, 0.));
+    c = mix(c, vec3(1.), smoothstep(.55, .85, cl) * smoothstep(.02, .15, rd.y) * .55);
   }
-  return c;
+  return c + vec3(1., .95, .85) * pow(max(dot(rd, SUN), 0.), 12.) * .2;
 }
 vec3 shade(vec3 q, vec3 rd, float d){
   float black; float dt = torii(q, black);
-  vec3 n = normal_mapH(q, .002 + .001 * d);
-  vec3 m;
-  if (dt < .02) m = black > .5 ? vec3(.025) : vec3(.75, .1, .04);
+  vec3 n = normal_mapH(q, .002 + .0012 * d);
+  vec3 m; float leafy = 0.;
+  if (dt < .02) m = black > .5 ? vec3(.03) : vec3(.62, .07, .01);
+  else if (q.y < .03) m = vec3(.1, .09, .07);
   else {
-    m = mix(vec3(.035, .07, .035), vec3(.08, .13, .05), noise(q.xz * 3.));
-    float r = length(q.xz - vec2(-5., 56.));
-    float snow = smoothstep(2.9, 3.4, q.y + (noise(vec2(atan(q.z - 56., q.x + 5.) * 14., r)) - .5) * 1.6);
-    m = mix(m, vec3(.3, .3, .34), smoothstep(2.2, 2.8, q.y));
-    m = mix(m, vec3(.95, .93, 1.), snow);
+    leafy = 1.;
+    bool near = shore(q.xz) > -1. && q.z < 32.;
+    if (near) { land(q.xz); m = mix(vec3(.035, .12, .02), vec3(.13, .3, .04), crownId.x); m = mix(m, vec3(.025, .08, .035), step(.8, crownId.y)); }
+    else m = mix(vec3(.05, .13, .06), vec3(.1, .22, .08), noise(q.xz * .6));
+    // leaves flutter: fine normal detail that moves with the wind
+    n = normalize(n + (vec3(noise3(q * 9. + vec3(t * .8, 0., 0.)), noise3(q * 9. + 3.), noise3(q * 9. - vec3(0., 0., t * .6))) - .5) * (near ? .7 : .35));
+    m *= .7 + .6 * noise3(q * 5.);
   }
   float dif = max(dot(n, SUN), 0.);
-  float sh = dif > 0. ? shadow_mapH(q + n * .02, SUN, 20.) : 0.;
-  vec3 lin = dif * sh * vec3(2.1, 1.25, .95) + (.5 + .5 * n.y) * vec3(.24, .25, .42);
+  float sh = dif > 0. ? shadow_mapH(q + n * .03, SUN, 15.) : 0.;
+  vec3 lin = dif * sh * vec3(2.2, 2., 1.7) + (.5 + .5 * n.y) * vec3(.3, .4, .55) + leafy * pow(max(dot(rd, SUN), 0.), 2.) * vec3(.25, .35, .05);
   vec3 c = m * lin * ao_mapH(q, n);
-  c += (dt < .02 && black < .5) ? vec3(.12, .02, 0.) : vec3(0.);
-  return mix(c, vec3(.62, .52, .62), 1. - exp(-d * .011));
+  c += (dt < .02 && black < .5) ? vec3(.1, .015, 0.) : vec3(0.);
+  return mix(c, vec3(.6, .74, .9), 1. - exp(-max(d - 8., 0.) * .009));
 }`, `
-  vec3 ro = vec3(.4 * sin(t * .01), .85, 0.);
-  vec3 rd = view(p, 1.5);
+  vec3 ro = vec3(.3 * sin(t * .01), .5, 0.);
+  vec3 rd = normalize(vec3(p.x, p.y - HZK, 1.5));
   float dT = march_mapH(ro, rd, 95.);
   float dW = rd.y < 0. ? -ro.y / rd.y : 1e5;
   if (dW < dT && dW < 95.) {
     vec3 q = ro + rd * dW;
-    vec2 w = vec2(noise(q.xz * vec2(7., 2.) + vec2(0., t * .25)), noise(q.xz * vec2(4., 1.5) - vec2(t * .15, 0.))) - .5;
-    vec3 n = normalize(vec3(w.x * .03, 1., w.y * .06));
+    float paws = .25 + .75 * smoothstep(.42, .72, fbm(q.xz * vec2(.18, .45) + vec2(t * .04, -t * .01)));
+    vec2 w = vec2(noise(q.xz * vec2(3., 9.) + vec2(t * .5, 0.)), noise(q.xz * vec2(5., 14.) - vec2(0., t * .7))) - .5;
+    vec3 n = normalize(vec3(w.x * .015 * paws, 1., w.y * .04 * paws));
     vec3 rr = reflect(rd, n);
     float dR = march_mapH(q + vec3(0., .01, 0.), rr, 95.);
     vec3 rc = dR < 95. ? shade(q + rr * dR, rr, dR + dW) : sky(rr);
-    col = mix(vec3(.03, .04, .08), rc, .78);
-    col = mix(col, vec3(.62, .52, .62), 1. - exp(-dW * .011));
+    float fr = .1 + .9 * pow(1. - max(dot(n, -rd), 0.), 5.);
+    col = mix(vec3(.03, .1, .16), rc * vec3(.85, .92, 1.), .62 + .3 * fr);
+    col += vec3(1., .95, .85) * pow(max(dot(rr, SUN), 0.), 300.) * 3. * paws;
+    col = mix(col, vec3(.6, .74, .9), 1. - exp(-max(dW - 8., 0.) * .009));
   } else if (dT < 95.) col = shade(ro + rd * dT, rd, dT);
   else col = sky(rd);
 `),
 
-  // Wulong: limestone karst towers rising out of a misty gorge with green ledges and
-  // water streaks, a natural stone bridge, and morning mist drifting through.
+  // Wulong: looking up a sunlit gorge at one of the Three Natural Bridges. Layered
+  // limestone cliffs with ochre and grey streaks, foliage masses on every ledge that
+  // move in the wind, and the great arch opening onto light beyond.
   wulong: WORLD(`
-const vec3 SUN = vec3(-.62, .5, -.6);
-float pillar(vec3 p){
-  vec2 id = floor(p.xz / 4.); vec3 q = p; q.xz = mod(p.xz, 4.) - 2.;
-  float edge = 2. - max(abs(q.x), abs(q.z));
-  float h = hash(id);
-  bool open = h < .2 || (abs(id.x + .5) < 1. && id.y < 2.) || (abs(id.x * 4. + 2. - 1.) < 7. && abs(id.y * 4. + 2. - 30.) < 4.);
-  if (open || id.y < 2.) return max(edge + .4, p.y - 9.);
-  q.xz -= (vec2(hash(id + 3.), hash(id + 5.)) - .5) * .8;
-  float R = .7 + .4 * hash(id + 9.);
-  float H = 2. + 6.5 * hash(id + 13.) * smoothstep(1., 5., id.y);
-  float a = atan(q.z, q.x);
-  float r = R * (1. + .16 * (noise(vec2(a * 2.5 + h * 10., q.y * .6)) - .5) + .07 * (noise(vec2(a * 8., q.y * 2.5)) - .5));
-  r *= 1. - .3 * smoothstep(H - 1.2, H + .3, q.y);
-  float d = max(length(q.xz) - r, q.y - H - .2 * noise(q.xz * 3.)) * .7;
-  return min(d, max(edge + .4, p.y - 9.));
+const vec3 SUN = vec3(.3, .87, -.39);
+float cx(float z){ return 1.2 * sin(z * .07); }
+float veg(vec3 p){ return smoothstep(.48, .66, fbm(vec2(p.z * .14 + p.x * .1, p.y * .2)) + .25 * smoothstep(12., 16., p.y)); }
+float rock(vec3 p){
+  float x = p.x - cx(p.z);
+  float strata = .45 * noise(vec2(p.z * .2, p.y * 1.1)) + .25 * sin(p.y * 1.7 + 2. * noise(vec2(p.z * .15, 1.))) * noise(vec2(p.z * .3, p.y * .4));
+  float air = 4.3 + 1. * sin(p.z * .045 + 1.) - abs(x) + strata - .8 * noise(vec2(p.z * .1, p.y * .15));
+  float walls = max(air, p.y - (16. + 3. * fbm(p.xz * .1)));
+  float slab = max(44. - p.z + .5 * noise(p.xy * .4), p.z - 52.);
+  float arch = length(vec2(x / 3.4, (p.y + 1.) / 9.5)) - 1.;
+  float bridge = max(max(slab, -arch * 3.), p.y - 15.5 - fbm(p.xz * .2) * 2.);
+  float d = min(walls, bridge);
+  float v = veg(p);
+  d -= v * (.45 + .3 * noise3(p * 2.5 + vec3(.15 * sin(t * .9 + p.y), 0., 0.)));      // foliage, swaying
+  return d;
 }
-float arch(vec3 p){
-  vec3 a = p - vec3(1., 0., 30.);
-  float b = sdBox(a - vec3(0., 5., 0.), vec3(6.5, 2.4, 1.8)) - .3 * noise(a.xy * 1.5);
-  return max(b, -(length(a.xy - vec2(0., 1.)) - 4.6));
+float clumps(vec2 x){
+  vec2 i = floor(x), f = fract(x); float h = 0.;
+  for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+    vec2 g = vec2(float(k), float(j)), c = i + g, o = vec2(hash(c), hash(c + 7.)) * .7;
+    o.x += .04 * sin(t * 1.2 + hash(c + 5.) * 6.);
+    vec2 d = g + o - f; float r = .5 + .3 * hash(c + 3.);
+    h = max(h, sqrt(max(r * r - dot(d, d), 0.)) * (.8 + .5 * hash(c + 11.)) * (.85 + .3 * noise(x * 3.1 + c)));
+  }
+  return h;
 }
-float ground(vec3 p){ return p.y - (.5 * fbm(p.xz * .2) - .25); }
-float mapW(vec3 p){ return min(min(pillar(p), arch(p)), ground(p)); }
-${sdfKit('mapW', 130)}
-vec3 sky(vec3 rd){
-  vec3 c = mix(vec3(.82, .84, .82), vec3(.45, .6, .74), smoothstep(0., .5, rd.y));
-  return c + vec3(1., .85, .6) * pow(max(dot(rd, SUN), 0.), 8.) * .3;
+float ground(vec3 p){
+  float x = abs(p.x - cx(p.z));
+  float bank = smoothstep(.7, 1.6, x);
+  return p.y - (.12 * fbm(p.xz * .5) + bank * (.25 + .75 * clumps(p.xz / .7)));
 }
+float mapW(vec3 p){ return min(rock(p), ground(p)) * .5; }
+${sdfKit('mapW', 200)}
+vec3 sky(vec3 rd){ return mix(vec3(.85, .9, .92), vec3(.5, .68, .86), smoothstep(0., .6, rd.y)) + vec3(1., .95, .8) * pow(max(dot(rd, SUN), 0.), 6.) * .3; }
 vec3 shade(vec3 q, vec3 rd, float d){
-  vec3 n = normal_mapW(q, .003 + .001 * d);
+  vec3 n = normal_mapW(q, .004 + .001 * d);
+  float g = ground(q), v = veg(q);
   vec3 m;
-  if (ground(q) < .02) m = q.y < .02 ? vec3(.06, .1, .09) : mix(vec3(.05, .1, .04), vec3(.12, .18, .06), fbm(q.xz));
-  else {
-    float a = atan(q.z, q.x);
-    m = mix(vec3(.55, .52, .45), vec3(.68, .64, .55), fbm(q.xz * 2. + q.y));
-    m *= .65 + .35 * smoothstep(.2, .6, noise(vec2((q.x + q.z) * 5., q.y * .25)));
-    float veg = smoothstep(.45, .75, n.y + (fbm(q.xz * 2. + q.y * .7) - .5) * .9);
-    veg = max(veg, smoothstep(.62, .72, fbm(vec2(q.x * 1.3 + q.z * 1.7, q.y * 1.3))));
-    m = mix(m, mix(vec3(.08, .17, .05), vec3(.2, .3, .08), noise(q.xz * 4. + q.y)), veg);
+  if (g < rock(q) && q.y < 3.) {
+    v = smoothstep(.12, .35, q.y);
+    vec2 st = fract(vec2(q.x * 1.6, q.z * 2.4)) - .5;
+    float slab = smoothstep(.5, .42, max(abs(st.x), abs(st.y)));
+    m = mix(vec3(.42, .4, .36) * (.75 + .25 * slab), vec3(.07, .22, .03) + vec3(.12, .14, .02) * noise(q.xz * 3.), v);
+  } else {
+    float x = q.x - cx(q.z);
+    m = mix(vec3(.46, .45, .42), vec3(.66, .63, .57), noise(vec2((q.z + x) * 1.3, q.y * .12)));
+    m = mix(m, vec3(.68, .5, .3), smoothstep(.55, .8, noise(vec2((q.z + x) * 1.6, q.y * .12))) * .8);   // ochre runs
+    m *= .7 + .3 * smoothstep(.15, .5, noise(vec2((q.z - x) * 3., q.y * .2)));                        // grey water streaks
+  }
+  float leafy = max(v, step(.5, v));
+  if (v > .01) {
+    vec3 lc = mix(vec3(.1, .26, .03), vec3(.32, .5, .08), noise3(q * 1.3));
+    m = mix(m, lc * (.75 + .5 * noise3(q * 6.)), v);
+    n = normalize(n + (vec3(noise3(q * 7. + vec3(t * .7, 0., 0.)), noise3(q * 7. + 4.), noise3(q * 7. - vec3(0., t * .5, 0.))) - .5) * .8 * v);
   }
   float dif = max(dot(n, SUN), 0.);
-  float sh = dif > 0. ? shadow_mapW(q + n * .03, SUN, 20.) : 0.;
-  vec3 lin = dif * sh * vec3(1.8, 1.6, 1.3) + (.55 + .45 * n.y) * vec3(.32, .38, .44);
-  return m * lin * ao_mapW(q, n);
+  float sh = dif > 0. ? shadow_mapW(q + n * .05, SUN, 25.) : 0.;
+  vec3 lin = dif * sh * vec3(2.1, 1.95, 1.65) + (.45 + .55 * n.y) * vec3(.35, .42, .5) + v * pow(max(dot(rd, SUN), 0.), 2.) * vec3(.2, .3, .04);
+  vec3 c = m * lin * ao_mapW(q, n);
+  return mix(c, vec3(.74, .82, .88), 1. - exp(-max(d - 10., 0.) * .009));
 }`, `
-  vec3 ro = vec3(.8 * sin(t * .012), 2.6, 0.);
-  vec3 rd = view(p, 1.45);
-  float d = march_mapW(ro, rd, 70.);
-  col = d < 70. ? shade(ro + rd * d, rd, d) : sky(rd);
-  float dd = min(d, 70.);
-  vec3 q = ro + rd * dd;
-  // Haze with distance, and a mist layer pooled in the gorge that drifts.
-  col = mix(col, vec3(.78, .82, .82), 1. - exp(-dd * .016));
-  float mist = 0.;
-  for (int i = 0; i < 6; i++) {
-    float h = .6 + float(i) * .55;
-    float s = (h - ro.y) / rd.y;
-    if (s > 0. && s < dd) { vec2 m = (ro + rd * s).xz; mist += smoothstep(.5, .9, fbm(m * .12 + vec2(t * .015 + float(i), 0.))) * .16; }
+  vec3 ro = vec3(cx(0.) + .4 * sin(t * .01), 1.7, 0.);
+  vec3 rd = view(p, 1.35);
+  rd.xz = rot(-.06) * rd.xz;
+  float d = march_mapW(ro, rd, 90.);
+  col = d < 90. ? shade(ro + rd * d, rd, d) : sky(rd);
+  // soft sunbeams falling into the gorge
+  float beams = 0.;
+  for (int i = 1; i <= 5; i++) {
+    float s = float(i) * min(d, 60.) / 6.;
+    vec3 q = ro + rd * s;
+    beams += smoothstep(.55, .8, noise(vec2(q.x * .4 - q.y * .25, q.z * .1))) * smoothstep(3., 12., q.y + 4.);
   }
-  col = mix(col, vec3(.9, .92, .92), clamp(mist, 0., .85));
+  col += vec3(1., .95, .8) * beams * .025;
 `),
 
   // Rainforest: a river winding through a valley of tree crowns, each crown its own
@@ -317,11 +351,11 @@ vec3 shade(vec3 q, vec3 rd, float d){
     d = dW;
   } else col = d < 70. ? shade(ro + rd * d, rd, d) : sky(rd);
   float dd = min(d, 70.);
-  col = mix(col, vec3(.78, .84, .82), 1. - exp(-dd * .018));
+  col = mix(col, vec3(.74, .82, .84), 1. - exp(-max(dd - 6., 0.) * .008));
   float mist = 0.;
   for (int i = 0; i < 5; i++) {
     float h = .5 + float(i) * .45, s = (h - ro.y) / rd.y;
-    if (s > 0. && s < dd) { vec2 m = (ro + rd * s).xz; mist += smoothstep(.5, .9, fbm(m * .15 + vec2(t * .02 - float(i), 0.))) * (1. - valley(m)) * .35; }
+    if (s > 0. && s < dd) { vec2 m = (ro + rd * s).xz; mist += smoothstep(.5, .9, fbm(m * .15 + vec2(t * .02 - float(i), 0.))) * (1. - valley(m)) * .16; }
   }
   col = mix(col, vec3(.92, .95, .93), clamp(mist, 0., .8));
   for (int i = 0; i < 4; i++) {                     // macaws
@@ -400,217 +434,192 @@ vec3 earth(vec3 ro, vec3 rd, float s){
   }
 `),
 
-  // Chongqing: a hillside of towers across the river at night, window grids and LED
-  // facades pulsing with the beat, Hongyadong's golden terraces on the bank, a lit
-  // bridge, and the river streaking every light.
+  // Chongqing: Hongyadong at blue hour. Stilted tiers climb the cliff above the river,
+  // their sweeping roofs outlined in gold, warm windows and red lanterns, quiet towers
+  // behind, and soft gold reflections in the Jialing below.
   chongqing: WORLD(`
-float terr(vec2 x){ return x.y < 11.5 ? -1. : smoothstep(11.5, 26., x.y) * 2.3 + 1.1 * fbm(x * .12) * smoothstep(11.5, 15., x.y) - .3; }
+float tier(vec3 p, float k){
+  float zf = 13. + k * 1.25, yb = k * 1.1 - .2;
+  float x0 = -12. + k * .9 + 2.5 * hash(vec2(k, 2.)), x1 = 8. - k * .6 - 2.5 * hash(vec2(k, 5.));
+  float body = sdBox(p - vec3((x0 + x1) * .5, yb + .45, zf + 3.), vec3((x1 - x0) * .5, .45, 3.));
+  vec3 r = p - vec3(0., yb + .98, zf + .25);
+  r.x = clamp(r.x, x0 - (x0 + x1) * .5 * 0. , x1);
+  vec3 rr = vec3(p.x, r.y, r.z); float cell = floor((p.x + k * .7) / 1.7); rr.x = mod(p.x + k * .7, 1.7) - .85;
+  float inX = max(x0 - p.x, p.x - x1);
+  rr.y -= .25 * hash(vec2(cell, k));                                    // pavilions at varied heights
+  rr.y += .12 * rr.x * rr.x;                                            // eaves sweep up at the corners
+  rr.yz = rot(.7854) * rr.yz;
+  float roof = max(sdBox(rr, vec3(.72, .28, .28)), -(p.y - (yb + .9)));
+  roof = max(roof, inX);
+  return min(body, roof);
+}
+float hong(vec3 p){ float d = 1e3; for (int k = 0; k < 6; k++) d = min(d, tier(p, float(k))); return d; }
 float towers(vec3 p){
-  vec2 id = floor(p.xz / 1.4); vec3 q = p; q.xz = mod(p.xz, 1.4) - .7;
-  float edge = .7 - max(abs(q.x), abs(q.z)) + .12;
-  vec2 c = (id + .5) * 1.4;
-  float skip = max(max(edge, 12.4 - p.z), p.y - 6.5);
-  if (c.y < 13. || hash(id) < .12) return max(skip, .05);
-  float base = terr(c);
-  float cl = exp(-pow((c.x - 1.5) / 7., 2.)) * smoothstep(13., 18., c.y);
-  float H = .5 + pow(hash(id + 2.), 2.) * (1. + 4.2 * cl);
-  vec3 hs = vec3(.3 + .25 * hash(id + 4.), H * .5, .3 + .25 * hash(id + 6.));
-  if (c.y < 15. && c.x > -6. && c.x < -2.) hs = vec3(.55, .3 + .25 * hash(id + 2.), .5);
-  return min(sdBox(q - vec3(0., base + hs.y, 0.), hs), max(skip, .05));
+  if (p.z < 21.) return max(21. - p.z, .1);
+  float id = floor(p.x / 3.); vec3 q = p; q.x = mod(p.x, 3.) - 1.5;
+  float H = 8. + 9. * hash(vec2(id, 1.)), z0 = 26. + 6. * hash(vec2(id, 4.));
+  float b = sdBox(q - vec3(0., H * .5, z0), vec3(.9 + .4 * hash(vec2(id, 3.)), H * .5, 1.5));
+  return min(b, max(1.5 - abs(q.x), p.y - 17.) + .3);
 }
-float bridge(vec3 p){
-  vec3 b = p - vec3(6., .7, 8.); b.xz = rot(.95) * b.xz;
-  float deck = sdBox(b, vec3(9., .04, .12));
-  vec3 py = b; py.x = abs(py.x) - 3.;
-  return min(deck, sdBox(py - vec3(0., .7, 0.), vec3(.05, .7, .05)));
-}
-float mapC(vec3 p){ return min(min(towers(p), bridge(p)), p.y - terr(p.xz)); }
-${sdfKit('mapC', 200, 0, false)}
-vec3 sky(vec3 rd){ return mix(vec3(.16, .07, .2), vec3(.01, .015, .045), smoothstep(0., .3, rd.y)); }
+float mapC(vec3 p){ return min(min(hong(p), towers(p)), p.y + .5 + 20. * step(p.z, 12.) * step(-14., p.z)); }
+${sdfKit('mapC', 160, 0, false)}
+vec3 sky(vec3 rd){ return mix(vec3(.14, .16, .34), vec3(.03, .06, .17), smoothstep(0., .45, rd.y)); }
 vec3 shade(vec3 q, vec3 rd, float d){
-  vec3 n = normal_mapC(q, .002 + .001 * d);
-  vec3 c = vec3(.012, .012, .02) * (.6 + .4 * n.y);
-  if (bridge(q) < .02) {
-    vec3 b = q - vec3(6., .7, 8.); b.xz = rot(.95) * b.xz;
-    float dots = smoothstep(.3, .0, abs(fract(b.x * 3.) - .5)) * step(.02, abs(b.y));
-    float cars = smoothstep(.06, 0., abs(fract(b.x * .15 - t * .12) - .5)) + smoothstep(.06, 0., abs(fract(b.x * .2 + t * .1 + .3) - .5));
-    return c + vec3(1., .75, .35) * dots * 1.2 + vec3(1., .3, .2) * cars * 2.;
+  vec3 n = normal_mapC(q, .003 + .001 * d);
+  if (towers(q) < .03) {
+    vec2 g = vec2((abs(n.x) > .5 ? q.z : q.x) / .6, q.y / .5);
+    float w = step(.35, fract(g.x)) * step(.4, fract(g.y)) * step(.8, hash(floor(g) + floor(q.x / 3.)));
+    float sign = step(.75, hash(vec2(floor(q.x / 3.), 9.))) * smoothstep(.1, 0., abs(fract(q.x / 3.) - .5) - .08) * step(9., q.y) * step(q.y, 12.);
+    return vec3(.03, .04, .09) + vec3(.55, .65, .85) * mix(w, .08, aaFade(d, .5)) * .35 + vec3(1.4, .12, .1) * sign * .8;
   }
-  if (q.y - terr(q.xz) < .03) return c + vec3(.03, .02, .03);
-  vec3 qi = q - n * .02;
-  vec2 id = floor(qi.xz / 1.4), cc = (id + .5) * 1.4;
-  float hb = hash(id + 8.);
-  float u = abs(n.x) > .5 ? q.z : q.x;
-  vec2 g = vec2(u / .07, q.y / .085);
-  float win = step(.25, fract(g.x)) * step(.3, fract(g.y)) * step(.5, abs(n.x) + abs(n.z));
-  float lit = step(.5, hash(floor(g) + id * 7.31));
-  vec3 wc = hb < .5 ? vec3(1., .78, .45) : vec3(.75, .85, 1.);
-  c += wc * mix(win * lit, .3, aaFade(d, .07)) * 1.1;
-  if (cc.y < 15. && cc.x > -6. && cc.x < -2.) {        // Hongyadong
-    float eave = smoothstep(.04, 0., abs(fract(q.y / .22) - .5) - .42);
-    float lan = smoothstep(.35, .0, length(vec2(fract(u * 4.) - .5, (fract(q.y / .22) - .5) * 1.5)));
-    c = vec3(.025, .012, .01) + vec3(1.3, .55, .15) * (eave * 1.2 + mix(lan, .25, aaFade(d, .2)) * 1.4);
-  } else if (hb > .8) {                                  // LED facades on the beat
-    vec3 led = .5 + .5 * cos(6.28 * (q.y * .25 - t * .08 + hb * 3. + vec3(0., .33, .67)));
-    float stripe = step(.6, fract(q.y * 6. - t * .5));
-    c += led * (.4 + 1.6 * stripe) * (.55 + .9 * pow(1. - beat, 4.)) * step(.5, abs(n.x) + abs(n.z));
+  if (q.z < 12.5 && q.y < -.3) return vec3(.01);
+  // Hongyadong: which tier, and where within its storey
+  float k = clamp(floor((q.y + .2) / 1.1), 0., 5.), yb = k * 1.1 - .2, v = q.y - yb;
+  vec3 c = vec3(.05, .025, .015);
+  if (n.y > .3 || (v > .88 && abs(n.z) < .95)) {                       // roofs: dark tiles lit gold at the eaves
+    float eave = smoothstep(.12, 0., abs(v - .9));
+    c = vec3(.3, .17, .05) * (.6 + .4 * n.y) + vec3(1.5, .95, .38) * (eave * 1.8 + .18 * (.5 + .5 * sin(q.x * 18.)) * (1. - aaFade(d, .06)));
+  } else if (n.z < -.5) {                                              // facades: warm windows and lanterns
+    vec2 g = vec2((q.x + k * .7) / .42, v / .3);
+    float win = step(.18, fract(g.x)) * step(.25, fract(g.y)) * step(v, .82);
+    float lit = .55 + .45 * step(.3, hash(floor(g) + k * 13.));
+    c += vec3(1.25, .7, .28) * mix(win * lit, .55, aaFade(d, .3)) * 1.1;
+    vec2 l = vec2(fract((q.x + k * .7) / .85) - .5, (v - .72) * 3.);
+    c += vec3(1.6, .18, .08) * smoothstep(.12, .05, length(l)) * (.8 + .2 * sin(t * 2. + q.x));
+    float sign = step(.86, hash(vec2(floor((q.x + k * .7) / 1.7), k))) * step(.15, v) * step(v, .75) * step(abs(fract((q.x + k * .7) / 1.7) - .5), .06);
+    c = mix(c, vec3(1.5, .25, .1) * (.8 + .4 * pow(1. - beat, 3.)), sign);
   }
   return c;
 }`, `
-  vec3 ro = vec3(.5 * sin(t * .01), 1.1, 0.);
+  vec3 ro = vec3(-1. + .6 * sin(t * .01), 2.6, -24.);
   vec3 rd = view(p, 1.6);
-  float d = march_mapC(ro, rd, 60.);
-  float dW = rd.y < 0. ? -ro.y / rd.y : 1e5;
-  vec3 fogc = vec3(.1, .05, .12);
-  if (dW < d && dW < 60.) {
+  rd.yz = rot(.04) * rd.yz;
+  float d = march_mapC(ro, rd, 90.);
+  float dW = rd.y < 0. ? (-.2 - ro.y) / rd.y : 1e5;
+  vec3 fogc = vec3(.08, .09, .2);
+  if (dW < d && dW < 90.) {
     vec3 q = ro + rd * dW;
-    vec3 n = normalize(vec3((noise(q.xz * vec2(2., 6.) + vec2(0., t * .4)) - .5) * .03, 1., (noise(q.xz * vec2(1.5, 9.) - vec2(t * .3, 0.)) - .5) * .25));
+    vec3 n = normalize(vec3((noise(q.xz * vec2(1.5, 4.) + vec2(0., t * .3)) - .5) * .015, 1., (noise(q.xz * vec2(.8, 4.) - vec2(t * .25, 0.)) - .5) * .06));
     vec3 rr = reflect(rd, n);
-    float dR = march_mapC(q + vec3(0., .01, 0.), rr, 60.);
-    vec3 rc = dR < 60. ? shade(q + rr * dR, rr, dR + dW) : sky(rr);
-    col = mix(vec3(.01, .012, .02), rc, .5);
+    float dR = march_mapC(q + vec3(0., .01, 0.), rr, 90.);
+    vec3 rc = dR < 90. ? shade(q + rr * dR, rr, (dR + dW) * 4.) : sky(rr);
+    col = mix(vec3(.01, .015, .04), rc, .22);
     d = dW;
-  } else col = d < 60. ? shade(ro + rd * d, rd, d) : sky(rd);
-  col = mix(col, fogc, 1. - exp(-min(d, 60.) * .045));
-  col += vec3(.25, .1, .2) * exp(-abs(rd.y - .02) * 18.) * .25;
+  } else col = d < 90. ? shade(ro + rd * d, rd, d) : sky(rd);
+  col = mix(col, fogc, 1. - exp(-min(d, 90.) * .012));
+  col *= .45 + .55 * smoothstep(-.15, .18, p.y);           // quieter behind the decks
 `),
 
-  // Times Square: a canyon of towers covered in screens, each running its own beat-
-  // synced content, storefronts, yellow cabs, and a wet street that mirrors it all.
+  // Times Square: looking up the bowtie at One Times Square. Big screens stacked on
+  // every facade and up the tower, each with its own beat-synced content, LED trim, and
+  // a wet street that mirrors the light.
   timessquare: WORLD(`
-float cell(float z, float side){ return floor(z / 6.) + side * 37.; }
-float bld(vec3 p){
-  float side = sign(p.x); vec3 q = p; q.x = abs(q.x);
-  float id = cell(q.z, side), lz = mod(q.z, 6.) - 3.;
-  float fx = 4.6 + 1.1 * hash(vec2(id, 1.));
-  float H = 16. + 26. * hash(vec2(id, 2.));
-  float b = sdBox(vec3(q.x - fx - 6., p.y - H * .5, lz), vec3(6., H * .5, 2.95));
-  float nid = id + sign(lz), nfx = 4.6 + 1.1 * hash(vec2(nid, 1.)), nH = 16. + 26. * hash(vec2(nid, 2.));
-  b = min(b, sdBox(vec3(q.x - nfx - 6., p.y - nH * .5, lz - sign(lz) * 6.), vec3(6., nH * .5, 2.95)));
-  return min(b, max(4.6 - q.x, 0.) + 1.);
+float cellH(float id){ return 18. + 14. * hash(vec2(id, 2.)); }
+float facades(vec3 p){
+  float side = sign(p.x), fx = 7. - .07 * p.z, air = fx - abs(p.x);
+  float id = floor(p.z / 8.) + side * 31.;
+  return max(air * .99, p.y - cellH(id));
 }
-float cabs(vec3 p){
-  float lane = p.x > 0. ? 2.3 : -2.3, dir = p.x > 0. ? 1. : -1.;
-  float z = mod(p.z - t * 1.6 * dir + (p.x > 0. ? 0. : 7.), 17.) - 8.5;
-  vec3 q = vec3(p.x - lane, p.y, z);
-  return min(sdBox(q - vec3(0., .38, 0.), vec3(.42, .2, .95)) - .05, sdBox(q - vec3(0., .68, -.1), vec3(.36, .14, .5)) - .04);
-}
-float mapT(vec3 p){ return min(min(bld(p), cabs(p)), p.y); }
-${sdfKit('mapT', 160, 0, false)}
-vec3 pal(float h){ return .5 + .5 * cos(6.28 * (h + vec3(0., .33, .67))); }
+float tower(vec3 p){ return min(sdBox(p - vec3(0., 12., 50.), vec3(2.6, 12., 2.4)), sdBox(p - vec3(0., 15., 64.), vec3(9., 15., 3.))); }
+float mapT(vec3 p){ return min(min(facades(p), tower(p)), p.y); }
+${sdfKit('mapT', 140, 0, false)}
+vec3 pal(float h){ return pow(.5 + .5 * cos(6.28 * (h + vec3(0., .33, .67))), vec3(1.6)); }
 vec3 screen(vec2 uv, float k, float s, float d){
-  vec3 a = pal(s), b = pal(s + .4);
-  float pulse = .65 + .7 * pow(1. - beat, 3.);
-  if (k < .25) return mix(a, b, step(.5, fract((uv.x + uv.y) * 2.5 - t * .4))) * pulse;
-  if (k < .5) { float r = length((uv - .5) * vec2(1.6, 1.)); return mix(a * .15, b * 1.3, smoothstep(.31, .29, r * (1. - .12 * pow(1. - beat, 3.)))) + a * smoothstep(.02, 0., abs(r - .4)); }
-  if (k < .75) {                                   // a headline crawling across a solid panel
-    vec2 g = vec2(uv.x * 40. + t * 6., (uv.y - .38) * 26.);
-    float txt = step(0., g.y) * step(g.y, 6.) * step(.5, hash(floor(g) + floor(g.x / 6.))) * step(1., mod(floor(g.x), 6.));
-    return mix(a * .55, vec3(1.1), txt * (1. - aaFade(d, .02))) * pulse + vec3(.2) * aaFade(d, .02); }
-  return mix(a, b, smoothstep(.2, .8, fbm(uv * 2.5 + vec2(t * .08, beat * .2)))) * pulse;
+  vec3 a = pal(s), b = pal(s + .3);
+  float pulse = .75 + .5 * pow(1. - beat, 3.);
+  if (k < .3) return mix(a, b, smoothstep(.3, .7, uv.y + .25 * sin(uv.x * 3. + t * .5))) * pulse;
+  if (k < .55) { float r = length((uv - .5) * vec2(1.7, 1.)); return mix(a * .2, b * 1.2, smoothstep(.27, .25, r * (1. - .1 * pow(1. - beat, 3.)))) + a * .6 * smoothstep(.015, 0., abs(r - .36)); }
+  if (k < .8) { float bar = smoothstep(.02, 0., abs(uv.y - .5) - .12); float word = step(.35, hash(vec2(floor(uv.x * 9. + t * 1.5), 1.)));
+    return mix(a * .5, vec3(1.15), bar * mix(word, .6, aaFade(d, .04))) * pulse; }
+  return mix(a, b, smoothstep(.25, .75, fbm(uv * 2. + vec2(t * .06, 0.)))) * pulse;
 }
 vec3 shade(vec3 q, vec3 rd, float d){
-  vec3 n = normal_mapT(q, .002 + .001 * d);
-  if (cabs(q) < .02) {
-    float z = q.x > 0. ? 1. : -1.;
-    vec3 c = vec3(.9, .65, .05) * (.15 + .25 * n.y);
-    float front = step(.9, -n.z * z * -1.);
-    return c + (q.x > 0. ? vec3(1.6, .1, .05) * step(.9, -n.z) : vec3(2., 1.9, 1.6) * step(.9, -n.z)) * step(q.y, .5);
-  }
+  vec3 n = normal_mapT(q, .003 + .001 * d);
   if (q.y < .01) return vec3(.02);
-  float side = sign(q.x), id = cell(q.z, side), lz = mod(q.z, 6.) - 3.;
-  if (abs(n.x) < .5) return vec3(.02);
-  if (q.y < 2.2) return vec3(.04) + vec3(1., .8, .55) * step(.4, q.y) * step(.35, fract(lz * .7)) * .9;
-  float band = floor((q.y - 2.2) / 3.4), v = fract((q.y - 2.2) / 3.4);
-  float s = hash(vec2(id, band + 7.));
-  if (s < .12 || q.y > 26.) {
-    float w = step(.3, fract(lz * 3.)) * step(.35, fract(q.y * 2.5)) * step(.6, hash(floor(vec2(lz * 3., q.y * 2.5))));
-    return vec3(.025) + vec3(1., .85, .6) * mix(w, .4, aaFade(d, .33)) * .35;
+  vec2 uv; float id, rows, cols, H;
+  if (tower(q) < .03) {
+    if (q.z > 55.) return vec3(.03, .025, .04) + vec3(1., .85, .6) * .08;
+    uv = vec2(abs(n.z) > .5 ? q.x + 2.6 : q.z - 47.6, q.y - 1.) / vec2(5.2, 3.6);
+    id = 900. + floor(uv.y); rows = 1.; cols = 1.; H = 23.;
+    if (q.y > 22.) return vec3(.04) + vec3(.9, .8, .6) * .3;
+  } else {
+    float side = sign(q.x); id = floor(q.z / 8.) + side * 31.; H = cellH(id);
+    if (q.y < 2.4) { float shop = step(.12, fract(q.z * .5)) * step(.4, q.y) * step(q.y, 2.); return vec3(.02) + pal(hash(vec2(floor(q.z * .5), id))) * shop * .14; }
+    if (q.y > H - 2.) return vec3(.03, .03, .05);
+    uv = vec2(mod(q.z, 8.) / 8., (q.y - 2.4) / (H - 4.4));
+    rows = 4. + floor(hash(vec2(id, 5.)) * 3.); cols = 2. + step(.5, hash(vec2(id, 6.)));
   }
-  vec2 uv = vec2((lz + 2.85) / 5.7, (v - .05) / .9);
-  float inside = step(0., uv.y) * step(uv.y, 1.) * step(0., uv.x) * step(uv.x, 1.);
-  float bezel = inside * (1. - step(.02, uv.x) * step(uv.x, .98) * step(.03, uv.y) * step(uv.y, .97));
-  return mix(vec3(.02), screen(uv, hash(vec2(id, band)), s * 7., d) * 2.2, inside) * (1. - bezel * .85);
+  vec2 g = uv * vec2(cols, rows), f = fract(g), cell = floor(g);
+  float s = hash(cell + id * 1.7);
+  float inside = step(.07, f.x) * step(f.x, .93) * step(.1, f.y) * step(f.y, .9) * step(.12, hash(cell + id * 5.3));
+  float trim = smoothstep(.012, 0., abs(f.y - .025)) * step(.5, hash(cell + id));
+  vec3 led = pal(id * .13 + t * .05) * (.6 + .6 * pow(1. - beat, 2.));
+  return vec3(.02, .02, .03) + screen(f, hash(cell + id * 3.1), s * 5., d) * inside + led * trim * .8;
 }`, `
-  vec3 ro = vec3(0., 2.4, t * .35);
-  vec3 rd = view(p, 1.25);
-  rd.yz = rot(-.08) * rd.yz;
-  float d = march_mapT(ro, rd, 90.);
-  vec3 fogc = vec3(.2, .1, .22);
-  if (d < 90. && ro.y + rd.y * d < .01) {
+  vec3 ro = vec3(.3 * sin(t * .01), 2.2, -4.);
+  vec3 rd = view(p, 1.3);
+  rd.yz = rot(.09) * rd.yz;
+  float d = march_mapT(ro, rd, 100.);
+  vec3 fogc = vec3(.12, .07, .16);
+  if (d < 100. && ro.y + rd.y * d < .01) {
     vec3 q = ro + rd * d;
-    float wet = smoothstep(.35, .65, fbm(q.xz * .6));
-    vec3 n = normalize(vec3((noise(q.xz * 3.) - .5) * .05 * (1. - wet), 1., (noise(q.xz * 3. + 5.) - .5) * .05 * (1. - wet)));
+    vec3 n = vec3(0., 1., 0.);
     vec3 rr = reflect(rd, n);
-    float dR = march_mapT(q + vec3(0., .01, 0.), rr, 70.);
-    vec3 rc = dR < 70. ? shade(q + rr * dR, rr, dR + d) : fogc;
-    rc = mix(rc, fogc, 1. - exp(-(dR + d) * .02));
-    float mark = smoothstep(.06, .03, abs(abs(q.x) - .1)) * step(.5, fract(q.z * .25)) + smoothstep(.06, .03, abs(abs(q.x) - 3.2));
-    col = mix(vec3(.015) + vec3(.6, .5, .2) * mark * .3, rc, .15 + .4 * wet);
-  } else col = d < 90. ? shade(ro + rd * d, rd, d) : fogc * 1.3;
-  col = mix(col, fogc, 1. - exp(-min(d, 90.) * .02));
+    float dR = march_mapT(q + vec3(0., .01, 0.), rr, 90.);
+    vec3 rc = dR < 90. ? shade(q + rr * dR, rr, dR + d) : fogc;
+    float mark = smoothstep(.08, .04, abs(abs(q.x) - 2.)) * step(.5, fract(q.z * .2));
+    col = mix(vec3(.015) + vec3(.7, .65, .5) * mark * .15, rc, .18 + .3 * smoothstep(.35, .65, fbm(q.xz * .4)));
+  } else col = d < 100. ? shade(ro + rd * d, rd, d) : fogc * 1.2;
+  col = mix(col, fogc, 1. - exp(-min(d, 100.) * .012));
+  col *= .4 + .6 * smoothstep(-.15, .18, p.y);            // quieter behind the decks
 `),
 
-  // Aurora: snowy peaks over a still lake at night, green and violet curtains moving
-  // across a starry sky and mirrored in the water, pines along the shore.
+  // Aurora: a still lake under the northern lights. Tall curtains ripple across the sky
+  // and in the mirror-calm water, over soft snow-capped ridges and shoreline spruce.
   aurora: WORLD(`
-${ridged('rN', 6)}
-float mtH(vec2 x){
-  float far = smoothstep(8., 26., x.y);
-  float h = rN(x * .13) * (.3 + 3.4 * far);
-  float lake = smoothstep(8., 2., length((x - vec2(0., 9.)) * vec2(.22, .55)));
-  return h + .15 - 1.2 * lake;
-}
-float pine(vec2 x, float g){
-  vec2 id = floor(x / .8), q = mod(x, .8) - .4 - (vec2(hash(id + 4.), hash(id + 6.)) - .5) * .3;
-  if (g < .05 || g > 1.6 || hash(id) < .3) return 0.;
-  float H = .45 + .55 * hash(id + 2.), r = length(q);
-  float tiers = 1. - .25 * fract(r * 14.);
-  return max(0., H * (1. - r / .26) * tiers);
-}
-float landN(vec2 x){ float g = mtH(x); return g + pine(x, g); }
-float mapN(vec3 p){ return (p.y - landN(p.xz)) * .3; }
-${sdfKit('mapN', 170, 0)}
-vec3 aurora(vec3 ro, vec3 rd){
+float sm(float x){ return .5 * noise(vec2(x, 0.)) + .25 * noise(vec2(x * 2.1, 3.)) + .125 * noise(vec2(x * 4.3, 7.)); }
+vec3 lights(vec3 rd){
   vec3 c = vec3(0.);
   if (rd.y <= 0.) return c;
-  for (int i = 0; i < 18; i++) {
-    float h = 5. + float(i) * .45;
-    vec2 q = ro.xz + rd.xz * (h - ro.y) / rd.y;
-    float w = q.x * .14 + sin(q.y * .09 + t * .05) * 1.6 + fbm(q * .05 + t * .02) * 2.;
-    float band = exp(-pow(sin(w) * 2.2, 2.)) * smoothstep(60., 20., length(q));
-    float fold = .5 + .5 * sin(q.x * 1.2 + t * .3 + fbm(q * .3) * 4.);
-    vec3 ac = mix(vec3(.1, 1., .45), vec3(.6, .25, 1.), float(i) / 18.);
-    c += ac * band * (.4 + .6 * fold) * .09 * (1. - float(i) / 20.);
+  for (int i = 0; i < 26; i++) {
+    float fi = float(i), h = 3.5 + (fi + hash(gl_FragCoord.xy)) * .35;
+    vec2 q = rd.xz * (h - 1.) / rd.y;
+    float curve = q.x - 7. * sin(q.y * .07 + t * .025) - 3. * sin(q.y * .19 - t * .04 + 1.) - 9.;
+    float band = exp(-curve * curve * .35) + .6 * exp(-pow(curve + 13. + 4. * sin(q.y * .05 - t * .02), 2.) * .4);
+    float rays = .25 + .75 * pow(noise(vec2(q.y * 2.2 + q.x * .3, t * .15)), 1.5);
+    float fade = smoothstep(170., 40., length(q));
+    vec3 ac = mix(vec3(.15, 1., .45), vec3(.75, .25, .9), smoothstep(10., 22., fi));
+    c += ac * band * rays * fade * (1. - fi / 30.) * .1;
   }
-  return c * smoothstep(0., .08, rd.y);
+  return c;
 }
-vec3 sky(vec3 ro, vec3 rd){
-  vec3 c = mix(vec3(.03, .06, .1), vec3(.004, .01, .03), smoothstep(0., .5, rd.y));
-  c += vec3(.9, .95, 1.) * stars(rd, 160.) * smoothstep(0., .1, rd.y);
-  return c + aurora(ro, rd);
-}
-vec3 shade(vec3 q, vec3 rd, float d){
-  vec3 n = normal_mapN(q, .003 + .001 * d);
-  bool tree = pine(q.xz, mtH(q.xz)) > .02;
-  float snow = tree ? smoothstep(.6, .9, n.y) * .5 : smoothstep(.35, .7, n.y + (fbm(q.xz * 2.) - .5) * .5);
-  vec3 m = mix(tree ? vec3(.01, .03, .02) : vec3(.04, .04, .05), vec3(.75, .82, .95), snow);
-  vec3 lin = (.4 + .6 * n.y) * vec3(.1, .2, .2) + max(dot(n, normalize(vec3(.2, .6, 1.))), 0.) * vec3(.05, .25, .15);
-  return mix(m * lin * 1.6, vec3(.03, .06, .09), 1. - exp(-d * .03));
+vec3 above(vec2 q){
+  vec3 rd = view(q, 1.5);
+  vec3 c = mix(vec3(.02, .05, .08), vec3(.003, .008, .022), smoothstep(0., .5, rd.y));
+  c += vec3(.85, .9, 1.) * stars(rd, 150.) * smoothstep(0., .08, rd.y);
+  c += lights(rd);
+  float y = q.y - HZ;
+  float far = .035 + .085 * pow(sm(q.x * 2.2 + 4.), 1.6);
+  if (y < far) {
+    float snow = smoothstep(far - .03, far - .005, y) * smoothstep(.05, .09, far);
+    c = mix(vec3(.02, .035, .05), vec3(.22, .4, .38), snow) + lights(normalize(vec3(q.x, .3, 1.))) * .08;
+  }
+  float near = .012 + .03 * sm(q.x * 4. + 20.);
+  if (y < near) c = vec3(.008, .015, .02);
+  float side = smoothstep(.35, .8, abs(q.x));
+  float cx = floor(q.x / .022), fx = fract(q.x / .022) - .5;
+  float th = (.04 + .08 * hash(vec2(cx, 1.))) * side;
+  float w = (.5 - fract((y / max(th, .001)) * 5.) * .35) * (1. - y / max(th, .001));
+  if (th > .01 && y < th && abs(fx) < w * .9) c = vec3(.004, .01, .012);
+  return c;
 }`, `
-  vec3 ro = vec3(.8 * sin(t * .01), 1.2, 0.);
-  vec3 rd = view(p, 1.5);
-  float d = march_mapN(ro, rd, 70.);
-  float dW = rd.y < 0. ? -ro.y / rd.y : 1e5;
-  if (dW < d && dW < 70.) {
-    vec3 q = ro + rd * dW;
-    vec3 n = normalize(vec3((noise(q.xz * vec2(6., 2.) + vec2(0., t * .15)) - .5) * .02, 1., (noise(q.xz * vec2(3., 1.) - vec2(t * .1, 0.)) - .5) * .04));
-    vec3 rr = reflect(rd, n);
-    float dR = march_mapN(q + vec3(0., .01, 0.), rr, 70.);
-    vec3 rc = dR < 70. ? shade(q + rr * dR, rr, dR + dW) : sky(q, rr);
-    col = mix(vec3(.005, .01, .02), rc, .82);
-    col += vec3(.6, .7, .8) * smoothstep(.02, 0., abs(q.z - 3. - 4. * fbm(q.xz)) - .01) * .03;
-  } else col = d < 70. ? shade(ro + rd * d, rd, d) : sky(ro, rd);
+  if (p.y >= HZ) col = above(p);
+  else {
+    float depth = HZ - p.y;
+    float rip = (noise(vec2(p.x * 6., depth * 140. / (depth * 6. + .2) - t * .5)) - .5) * .012 * depth * 4.;
+    col = above(vec2(p.x + rip * .5, 2. * HZ - p.y + rip)) * vec3(.55, .65, .72);
+    col += vec3(.02, .05, .06) * smoothstep(.0, .3, depth);
+  }
 `),
 };
 
