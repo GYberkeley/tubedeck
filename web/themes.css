@@ -63,10 +63,16 @@
   --bg: #071f1d; --bar: #0a2725; --panel: #0d302d; --panel-mix: #0b2a27; --panel-2: #174440; --panel-3: #215751; --pad: #12403b;
   --line: #24635b; --line-soft: #164440; --text: #ecfbf7; --muted: #8fc2b7; --blue: #4fe3d1; --cue: #e9c46a;
   --deck-a: #5ee6d6; --deck-b: #d8c06a; --jog-bg: #082422; --jog-ring: #2fb3a3; --groove-a: #0f3a36; --groove-b: #0a2d2a;
-  --wave-bg: #0a3330; --wave-scrim: rgba(2, 14, 12, .12);
+  --wave-bg: #0a3330; --wave-scrim: rgba(2, 24, 26, .18);
   --wave-low: #2bd3c1; --wave-mid: #a6e47c; --wave-high: #ffffff; --playhead: #f2d27a;
 }
 [data-theme="waterfall"] .deck, [data-theme="waterfall"] .mixer { background-image: linear-gradient(180deg, rgba(120, 230, 210, .06), transparent 40%); }
+/* The band is rendered by the water shader (app.js); the CSS layers stand down. */
+.scene .water { display: none; width: 100%; height: 100%; }
+[data-theme="waterfall"] .scene .water { display: block; }
+[data-theme="waterfall"] .scene .sky, [data-theme="waterfall"] .scene .far, [data-theme="waterfall"] .scene .glow,
+[data-theme="waterfall"] .scene .l1, [data-theme="waterfall"] .scene .pool, [data-theme="waterfall"] .scene .mist { display: none; }
+[data-theme="waterfall"] { --wave-halo: rgba(3, 32, 34, .62); }
 [data-theme="waterfall"] .scene .sky { background: linear-gradient(180deg, #0d4a45 0%, #0b3d39 45%, #072a27 100%); }
 [data-theme="waterfall"] .scene .far {
   /* Karst towers, faint in the spray behind the water. */
