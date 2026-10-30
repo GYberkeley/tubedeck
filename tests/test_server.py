@@ -117,6 +117,7 @@ class HelperTest(unittest.TestCase):
         code, headers, body = self.req("/", token=False)
         self.assertEqual(code, 200)
         self.assertIn(b"tubedeck", body)
+        self.assertEqual(headers.get("Cache-Control"), "no-cache")  # updates must reach cached browsers
 
     def test_rejects_bad_video_ids(self):
         for path, method in [("/api/fetch?id=../../etc", "POST"), ("/api/status?id=short", "GET")]:

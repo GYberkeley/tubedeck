@@ -298,6 +298,12 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(WEB), **kw)
 
+    def end_headers(self):
+        # Browsers must revalidate the app files, or an update keeps showing the old UI.
+        if not self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-cache")
+        super().end_headers()
+
     def log_message(self, fmt, *args):
         line = redact(fmt % args)
         if "/api/status" not in line and "/api/ping" not in line:

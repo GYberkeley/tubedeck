@@ -152,7 +152,6 @@ class BrowserSmoke(unittest.TestCase):
         pg.mouse.down()
         self.assertTrue(pg.evaluate("decks.A.scratching"))
         for i in range(1, 9):  # a quarter turn clockwise = forward
-            import math
             a = i / 8 * math.pi / 2
             pg.mouse.move(cx + r * 0.5 * math.cos(a), cy + r * 0.5 * math.sin(a))
         pg.mouse.up()
@@ -164,7 +163,9 @@ class BrowserSmoke(unittest.TestCase):
         # Turning the LOW knob down cuts the low shelf.
         k = pg.locator(".channel[data-ch=A] .knob[data-role=low]").bounding_box()
         pg.mouse.move(k["x"] + k["width"] / 2, k["y"] + k["height"] / 2)
-        pg.mouse.down(); pg.mouse.move(k["x"] + k["width"] / 2, k["y"] + 200); pg.mouse.up()
+        pg.mouse.down()
+        pg.mouse.move(k["x"] + k["width"] / 2, k["y"] + 200)
+        pg.mouse.up()
         pg.wait_for_timeout(200)
         self.assertLess(pg.evaluate("decks.A.chain.low.gain.value"), -20)
 
