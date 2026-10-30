@@ -581,17 +581,23 @@ float sm(float x){ return .5 * noise(vec2(x, 0.)) + .25 * noise(vec2(x * 2.1, 3.
 vec3 lights(vec3 rd){
   vec3 c = vec3(0.);
   if (rd.y <= 0.) return c;
-  for (int i = 0; i < 26; i++) {
-    float fi = float(i), h = 3.5 + (fi + hash(gl_FragCoord.xy)) * .35;
+  float jit = hash(gl_FragCoord.xy) * .5;
+  for (int i = 0; i < 32; i++) {
+    float fi = float(i), h = 3.5 + (fi + jit) * .28;
     vec2 q = rd.xz * (h - 1.) / rd.y;
-    float curve = q.x - 7. * sin(q.y * .07 + t * .025) - 3. * sin(q.y * .19 - t * .04 + 1.) - 9.;
-    float band = exp(-curve * curve * .35) + .6 * exp(-pow(curve + 13. + 4. * sin(q.y * .05 - t * .02), 2.) * .4);
-    float rays = .25 + .75 * pow(noise(vec2(q.y * 2.2 + q.x * .3, t * .15)), 1.5);
+    // the curtain drifts and folds; ripples run along it like a flag in the wind
+    float curve = q.x - 7. * sin(q.y * .07 + t * .09) - 3. * sin(q.y * .19 - t * .14 + 1.) - 1.6 * sin(q.y * .45 - t * .7) - 9.;
+    float second = q.x + 4. + 6. * sin(q.y * .05 - t * .06) + 1.2 * sin(q.y * .5 + t * .8);
+    float band = exp(-curve * curve * .35) + .6 * exp(-second * second * .4);
+    // rays shimmer and slide along the curtain; bright pulses travel through it
+    float rays = .2 + .8 * pow(noise(vec2(q.y * 2.2 + q.x * .3 - t * .9, t * .5)), 1.5);
+    float pulse = .55 + .45 * sin(q.y * .12 - t * 1.1) * sin(q.y * .05 + t * .3);
     float fade = smoothstep(170., 40., length(q));
-    vec3 ac = mix(vec3(.15, 1., .45), vec3(.75, .25, .9), smoothstep(10., 22., fi));
-    c += ac * band * rays * fade * (1. - fi / 30.) * .1;
+    float top = smoothstep(10., 26., fi + 4. * sin(q.y * .1 + t * .2));
+    vec3 ac = mix(vec3(.15, 1., .45), vec3(.75, .25, .9), top);
+    c += ac * band * rays * pulse * fade * (1. - fi / 36.) * .085;
   }
-  return c;
+  return c * (.85 + .15 * sin(t * .6));
 }
 vec3 above(vec2 q){
   vec3 rd = view(q, 1.5);
