@@ -1100,6 +1100,7 @@ function setScenes(name) {
   vista.setActive(name); under.setActive(name);
   document.documentElement.dataset.scene = vista.scene ? 'shader' : '';
   document.documentElement.dataset.under = under.scene ? 'on' : '';
+  document.documentElement.dataset.style = MOOD_THEMES.has(name) ? 'mood' : '';
 }
 
 let sceneBpm = 0;
