@@ -412,8 +412,14 @@ class Player {
   get paused() { return !this._playing; }
   get currentTime() {
     const s = this.st, ahead = s.playing || this.scratching ? Math.max(0, (ctx ? ctx.currentTime : 0) - s.t) * s.rate : 0;
-    return clamp(s.pos + ahead, 0, this.duration || 0);
+    let t = s.pos + ahead;
+    // Between engine reports, wrap the estimate the way the engine wraps the audio.
+    const L = this.loop;
+    if (L && s.pos < L.end && t >= L.end && !this.scratching) t = L.start + ((t - L.start) % (L.end - L.start));
+    return clamp(t, 0, this.duration || 0);
   }
+  // Last position the engine actually reported (no estimate).
+  get reportedTime() { return this.st.pos; }
   set currentTime(v) {
     v = clamp(v, 0, this.duration || 0);
     this.st = { ...this.st, pos: v, t: ctx ? ctx.currentTime : 0, ended: false };
@@ -437,7 +443,7 @@ class Player {
   get preservesPitch() { return this.keylock; }
   set webkitPreservesPitch(b) { this.preservesPitch = b; }
   motion(kind, seconds) { this.post({ type: 'motion', kind, seconds }); }
-  setLoop(loop) { this.post({ type: 'set', loop: loop ? { start: loop.start, end: loop.end } : null }); }
+  setLoop(loop) { this.loop = loop ? { start: loop.start, end: loop.end } : null; this.post({ type: 'set', loop: this.loop }); }
   setGains(gains) { this.post({ type: 'set', gains }); }
   scratch(on, target, playing) {
     this.scratching = on;
@@ -812,7 +818,12 @@ class Deck {
     const i = LOOP_LENGTHS.indexOf(this.loopBeats);
     const next = LOOP_LENGTHS[clamp((i < 0 ? 7 : i) + (f > 1 ? 1 : -1), 0, LOOP_LENGTHS.length - 1)];
     this.loopBeats = next;
-    if (this.loop && this.bpm) this.loop = { ...this.loop, end: this.loop.start + next * this.beatSec, beats: next };
+    if (this.loop && this.bpm) {
+      const start = this.loop.start, len = next * this.beatSec, t = this.el.currentTime;
+      this.loop = { ...this.loop, end: start + len, beats: next };
+      // Shrinking can leave the playhead past the new end; fold it back in, as a DDJ does.
+      if (t >= start + len) this.el.currentTime = start + ((t - start) % len);
+    }
     this.renderLoop(); this.renderPads();
   }
   renderLoop() {
@@ -903,8 +914,11 @@ class Deck {
       return { a: Math.atan2(dy, dx), r: Math.hypot(dx, dy) / (b.width / 2) };
     };
     ring.addEventListener('pointerdown', e => {
+      // A release that never arrived would leave the deck scratching (silent); finish it first.
+      if (active !== null && e.pointerId !== active) end({ pointerId: active });
       if (active !== null || !this.track) return;
-      active = e.pointerId; ring.setPointerCapture(e.pointerId);
+      active = e.pointerId;
+      try { ring.setPointerCapture(e.pointerId); } catch {}  // throws if the pointer is already gone
       const p = polar(e); last = p.a; lastT = performance.now();
       mode = p.r < 0.8 ? 'scratch' : 'bend';
       ring.classList.add(mode === 'scratch' ? 'scratching' : 'bending');
@@ -931,8 +945,12 @@ class Deck {
       this.scratchPos = pos;
       this.el.scratch(true, pos);
     });
-    const end = e => {
+    function end(e) {
       if (e.pointerId !== active) return;
+      deck.finishJog();
+    }
+    this.finishJog = () => {
+      if (active === null) return;
       active = null; ring.classList.remove('scratching', 'bending');
       this.bend = 0;
       if (mode === 'scratch') {
@@ -943,7 +961,10 @@ class Deck {
       this.el.playbackRate = this.rate;
       mode = null;
     };
-    ring.addEventListener('pointerup', end); ring.addEventListener('pointercancel', end);
+    const deck = this;
+    // lostpointercapture also fires when the browser drops the touch without a pointerup.
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => ring.addEventListener(t, end));
+    window.addEventListener('blur', () => this.finishJog());
   }
 
   bindOverview() {
@@ -963,7 +984,7 @@ class Deck {
     const el = this.el, dur = el.duration || 0, t = this.position;
     // The engine wraps loops at the exact sample; a seek far past the end exits the loop.
     if (this.loop !== this.sentLoop) { this.sentLoop = this.loop; el.setLoop(this.loop); }
-    if (this.loop && !this.scratching && t > this.loop.end + 0.3) this.exitLoop();
+    if (this.loop && !this.scratching && el.reportedTime > this.loop.end + 0.3) this.exitLoop();
     if (this.bend && !this.scratching && now - (this.lastJogMove || 0) > 80) { this.bend = 0; el.playbackRate = this.rate; }
     const playing = !el.paused && !this.scratching;
     this.root.classList.toggle('playing', playing);

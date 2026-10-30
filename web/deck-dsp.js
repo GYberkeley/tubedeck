@@ -50,7 +50,18 @@ class DeckDSP {
         if ('playing' in m) { if (m.playing && !this.playing) { this.ended = false; this.resetStretch(); } this.playing = m.playing; }
         if ('rate' in m) this.rate = m.rate;
         if ('keylock' in m) this.keylock = m.keylock;
-        if ('loop' in m) this.loop = m.loop ? { start: m.loop.start * this.sr, end: m.loop.end * this.sr } : null;
+        if ('loop' in m) {
+          const prev = this.loop;
+          this.loop = m.loop ? { start: m.loop.start * this.sr, end: m.loop.end * this.sr } : null;
+          // A loop shrunk while playing can leave the playhead past its new end (it would
+          // never cross the end again); fold it back in. Only if it was inside the old loop,
+          // so a deliberate jump elsewhere still leaves the loop.
+          const L = this.loop;
+          if (prev && L && this.pos >= L.end && this.pos >= L.start && this.pos <= prev.end) {
+            this.pos = L.start + ((this.pos - L.start) % (L.end - L.start));
+            this.resetStretch();
+          }
+        }
         if (m.gains) for (const s of this.stems) if (s.name in m.gains) s.gain = m.gains[s.name];
         break;
       case 'seek':

@@ -274,6 +274,29 @@ class BrowserSmoke(unittest.TestCase):
         loop = pg.evaluate("decks.A.loop")
         t = pg.evaluate("decks.A.el.currentTime")
         self.assertTrue(loop["start"] - 0.05 <= t <= loop["end"] + 0.05, f"{t} outside {loop}")
+        # Halving a loop down to 1/8 beat keeps looping, even with the playhead late in the loop.
+        self.assertIsNotNone(pg.evaluate("decks.A.loop"), "the 4-beat loop from above is still on")
+        pg.wait_for_function("decks.A.el.currentTime > decks.A.loop.start + 1.4")  # late in the 2 s loop
+        for _ in range(5):  # 4 -> 2 -> 1 -> 1/2 -> 1/4 -> 1/8
+            pg.click(".deck[data-deck=A] .loop-half")
+        self.assertEqual(pg.inner_text(".deck[data-deck=A] .loop-len"), "1/8")
+        pg.wait_for_timeout(1500)
+        loop = pg.evaluate("decks.A.loop")
+        self.assertIsNotNone(loop, "the 1/8 loop should still be running")
+        t = pg.evaluate("decks.A.el.currentTime")
+        self.assertTrue(loop["start"] - 0.01 <= t <= loop["end"] + 0.01, f"{t} outside {loop}")
+        pg.click(".deck[data-deck=A] .loop-len")
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+
+        # A scratch whose release never arrives (the browser drops the touch) still resumes play.
+        box = pg.locator(".deck[data-deck=A] .jog-ring").bounding_box()
+        pg.locator(".deck[data-deck=A] .jog-ring").dispatch_event("pointerdown", {
+            "pointerId": 7, "clientX": box["x"] + box["width"] / 2 + 20, "clientY": box["y"] + box["height"] / 2})
+        self.assertTrue(pg.evaluate("decks.A.scratching"))
+        pg.locator(".deck[data-deck=A] .jog-ring").dispatch_event("lostpointercapture", {"pointerId": 7})
+        self.assertFalse(pg.evaluate("decks.A.scratching"))
+        pg.wait_for_function("!decks.A.el.paused && decks.A.ui.play.classList.contains('lit')")
+
         pg.wait_for_function("decks.A.stemsReady", timeout=30000)
         # The original mix keeps playing; stems wait at gain 0 and a muted stem is subtracted.
         self.assertEqual(pg.evaluate("decks.A.el.dsp.stems.map(s => [s.name, s.gain])"),

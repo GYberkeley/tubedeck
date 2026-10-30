@@ -165,3 +165,13 @@ test('mix minus a muted stem: original when nothing is muted, the remainder when
   const muted = render(dsp, 0.5);
   assert.ok(Math.abs(freqOf(muted) - 440) < 5, 'only vocals remain');
 });
+
+test('shrinking a loop folds the playhead back inside it', () => {
+  const dsp = deck([{ name: 'mix', data: tone(440, 10) }], 10);
+  dsp.handle({ type: 'seek', pos: 1 });
+  dsp.handle({ type: 'set', playing: true, rate: 1, loop: { start: 1, end: 3 } });
+  render(dsp, 1.5);                                   // playhead ~2.5 s, inside the 2 s loop
+  dsp.handle({ type: 'set', loop: { start: 1, end: 1.0625 } });  // shrink to 1/16 s
+  render(dsp, 1);
+  assert.ok(dsp.pos >= SR * 1 && dsp.pos < SR * 1.0625, `pos ${dsp.pos / SR}`);
+});
