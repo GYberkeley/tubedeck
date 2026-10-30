@@ -64,140 +64,7 @@ function audio() {
 }
 document.addEventListener('pointerdown', () => audio(), { capture: true });
 
-// ---------- analysis ----------
-// Waveform detail follows rekordbox's colour waveform: 150 entries per second,
-// each with low / mid / high band levels (drawn blue / amber / white).
-const WAVE_RATE = 150;
-const MAX_ANALYSIS_SECONDS = 20 * 60;
-
-function waveform(buf) {
-  const sr = buf.sampleRate, ch0 = buf.getChannelData(0), ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
-  const per = sr / WAVE_RATE, n = Math.floor(ch0.length / per);
-  const low = new Float32Array(n), mid = new Float32Array(n), high = new Float32Array(n);
-  const a1 = 1 - Math.exp(-2 * Math.PI * 200 / sr), a2 = 1 - Math.exp(-2 * Math.PI * 2500 / sr);
-  let lp1 = 0, lp2 = 0, i = 0, max = 1e-6;
-  for (let e = 0; e < n; e++) {
-    let l = 0, m = 0, h = 0;
-    for (const end = Math.floor((e + 1) * per); i < end; i++) {
-      const x = (ch0[i] + ch1[i]) * 0.5;
-      lp1 += a1 * (x - lp1); lp2 += a2 * (x - lp2);
-      const al = Math.abs(lp1), am = Math.abs(lp2 - lp1), ah = Math.abs(x - lp2);
-      if (al > l) l = al; if (am > m) m = am; if (ah > h) h = ah;
-    }
-    low[e] = l; mid[e] = m; high[e] = h;
-    if (l > max) max = l; if (m > max) max = m; if (h > max) max = h;
-  }
-  for (let e = 0; e < n; e++) { low[e] /= max; mid[e] /= max; high[e] /= max; }
-  return { low, mid, high, length: n };
-}
-
-function fft(re, im) {
-  const n = re.length;
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
-    j ^= bit;
-    if (i < j) { let t = re[i]; re[i] = re[j]; re[j] = t; t = im[i]; im[i] = im[j]; im[j] = t; }
-  }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = -2 * Math.PI / len, wr = Math.cos(ang), wi = Math.sin(ang), half = len >> 1;
-    for (let i = 0; i < n; i += len) {
-      let cr = 1, ci = 0;
-      for (let k = 0; k < half; k++) {
-        const a = i + k, b = a + half, tr = re[b] * cr - im[b] * ci, ti = re[b] * ci + im[b] * cr;
-        re[b] = re[a] - tr; im[b] = im[a] - ti; re[a] += tr; im[a] += ti;
-        const t = cr * wr - ci * wi; ci = cr * wi + ci * wr; cr = t;
-      }
-    }
-  }
-}
-
-// Tempo and beat phase from a spectral-flux onset envelope. Candidate tempos are
-// scored on their beat multiples and weighted toward common DJ tempos, which keeps
-// triplet (2/3) and half-time readings from winning.
-function detectBeats(buf) {
-  const sr = buf.sampleRate, ch0 = buf.getChannelData(0), ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
-  const dec = Math.max(1, Math.round(sr / 11025)), sr2 = sr / dec;
-  const segLen = Math.min(ch0.length, Math.floor(sr * 120)), start = Math.floor((ch0.length - segLen) / 2);
-  const m = Math.floor(segLen / dec), x = new Float32Array(m);
-  for (let i = 0; i < m; i++) {
-    let s = 0;
-    for (let k = 0, j = start + i * dec; k < dec; k++, j++) s += ch0[j] + ch1[j];
-    x[i] = s / (2 * dec);
-  }
-  const N = 512, hop = 128, frames = Math.floor((m - N) / hop), fps = sr2 / hop, bins = N / 2;
-  const win = new Float32Array(N).map((_, i) => 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
-  const re = new Float32Array(N), im = new Float32Array(N), prev = new Float32Array(bins), flux = new Float32Array(frames), lowFlux = new Float32Array(frames);
-  const lowBins = Math.max(2, Math.round(160 / (sr2 / N)));  // up to ~160 Hz: the kick drum
-  for (let f = 0; f < frames; f++) {
-    for (let i = 0; i < N; i++) { re[i] = x[f * hop + i] * win[i]; im[i] = 0; }
-    fft(re, im);
-    let s = 0, sl = 0;
-    for (let b = 1; b < bins; b++) {
-      const lm = Math.log1p(100 * Math.hypot(re[b], im[b]));
-      if (f && lm > prev[b]) { s += lm - prev[b]; if (b <= lowBins) sl += lm - prev[b]; }
-      prev[b] = lm;
-    }
-    flux[f] = s; lowFlux[f] = sl;
-  }
-  const W = Math.round(fps / 2);
-  const detrend = src => {
-    const out = new Float32Array(frames);
-    let acc = 0;
-    for (let f = 0; f < frames; f++) {
-      acc += src[f]; if (f >= W) acc -= src[f - W];
-      out[f] = Math.max(0, src[f] - acc / Math.min(f + 1, W));
-    }
-    return out;
-  };
-  const onset = detrend(flux), lowOnset = detrend(lowFlux);
-  const maxLag = Math.ceil(fps * 60 / 60 * 4) + 2, ac = new Float32Array(maxLag + 1);
-  for (let L = 1; L <= maxLag; L++) {
-    let s = 0;
-    for (let i = 0; i + L < frames; i++) s += onset[i] * onset[i + L];
-    ac[L] = s / (frames - L);
-  }
-  const acAt = lag => {
-    if (lag >= maxLag) return 0;
-    const l = Math.floor(lag), t = lag - l;
-    return ac[l] * (1 - t) + ac[l + 1] * t;
-  };
-  let best = 0, bestScore = -1;
-  for (let bpm = 60; bpm <= 200; bpm += 0.05) {
-    const lag = fps * 60 / bpm;
-    const prior = Math.exp(-0.5 * (Math.log2(bpm / 125) / 0.6) ** 2);
-    // Off-beat energy (lag / 2) favours the faster of two related readings.
-    const score = (acAt(lag) + 0.5 * acAt(2 * lag) + 0.25 * acAt(4 * lag) + 0.5 * acAt(lag / 2)) * prior;
-    if (score > bestScore) { bestScore = score; best = bpm; }
-  }
-  // Refine: slide a beat comb across the whole window; the best-aligned tempo and
-  // offset win. This is far more precise than the autocorrelation peak alone.
-  const comb = (env, period, off) => {
-    let s = 0;
-    for (let p = off; p < frames - 2; p += period) { const l = Math.floor(p), t = p - l; s += env[l] * (1 - t) + env[l + 1] * t; }
-    return s;
-  };
-  let bpm = best, bestSum = -1;
-  for (let cand = best - 1; cand <= best + 1; cand += 0.02) {
-    const period = fps * 60 / cand;
-    for (let off = 0; off < period; off += 0.5) {
-      const s = comb(onset, period, off);
-      if (s > bestSum) { bestSum = s; bpm = cand; }
-    }
-  }
-  bpm = Math.round(bpm * 10) / 10;
-  // Beat phase from the kick drum, so the grid lands on beats rather than hi-hats.
-  const period = fps * 60 / bpm, phaseEnv = lowOnset.some(v => v > 0) ? lowOnset : onset;
-  let bestOff = 0, bestPhase = -1;
-  for (let off = 0; off < period; off += 0.25) {
-    const s = comb(phaseEnv, period, off);
-    if (s > bestPhase) { bestPhase = s; bestOff = off; }
-  }
-  const beatSec = 60 / bpm;
-  // Flux registers an onset about one hop after the frame centre reaches it.
-  const firstHit = start / sr + (bestOff * hop + N / 2 + hop) / sr2;
-  return { bpm, firstBeat: ((firstHit % beatSec) + beatSec) % beatSec };
-}
+// Analysis (waveform, beats, Int16 conversion) lives in analysis.js and runs in a worker.
 
 // ---------- rotary knobs ----------
 // Drag up/down (or sideways) to turn; double-tap resets.
@@ -206,38 +73,51 @@ class Knob {
   constructor(el, onChange) {
     this.el = el; this.onChange = onChange;
     this.min = +el.dataset.min; this.max = +el.dataset.max; this.def = +el.dataset.default; this.value = +el.dataset.value;
+    // Centre-detented knobs (EQ, trim, CFX) put the default at 12 o'clock even when
+    // the range is lopsided (EQ: -26 dB kill .. +6 dB), like a real mixer.
+    this.center = 'center' in el.dataset;
     el.innerHTML = `<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="15" fill="#1b1b1b" stroke="#3a3a3a" stroke-width="1.5"/>
       <path class="arc" fill="none" stroke="#2d7ff9" stroke-width="3" stroke-linecap="round"/>
       <line class="ind" x1="20" y1="20" x2="20" y2="7" stroke="#f0f0f0" stroke-width="2.5" stroke-linecap="round"/></svg>`;
     el.setAttribute('role', 'slider');
     this.arc = $('.arc', el); this.ind = $('.ind', el);
-    let startY = 0, startX = 0, startV = 0, lastTap = 0, active = null;
+    let startY = 0, startX = 0, startP = 0, lastTap = 0, active = null;
     el.addEventListener('pointerdown', e => {
       if (active !== null) return;
       active = e.pointerId; el.setPointerCapture(e.pointerId);
       const now = performance.now();
       if (now - lastTap < 300) this.set(this.def);
       lastTap = now;
-      startY = e.clientY; startX = e.clientX; startV = this.value;
+      startY = e.clientY; startX = e.clientX; startP = this.toPos(this.value);
     });
     el.addEventListener('pointermove', e => {
       if (e.pointerId !== active) return;
       const d = (startY - e.clientY) + (e.clientX - startX);
-      this.set(startV + d / 160 * (this.max - this.min));
+      this.set(this.fromPos(startP + d / 160));
     });
     const end = e => { if (e.pointerId === active) active = null; };
     el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
     this.render();
   }
+  // Knob travel 0..1 <-> value; centred knobs split the travel at the default.
+  toPos(v) {
+    if (!this.center) return (v - this.min) / (this.max - this.min);
+    return v <= this.def ? 0.5 * (v - this.min) / (this.def - this.min) : 0.5 + 0.5 * (v - this.def) / (this.max - this.def);
+  }
+  fromPos(p) {
+    p = clamp(p, 0, 1);
+    if (!this.center) return this.min + p * (this.max - this.min);
+    return p <= 0.5 ? this.min + (p / 0.5) * (this.def - this.min) : this.def + ((p - 0.5) / 0.5) * (this.max - this.def);
+  }
   set(v) {
     v = clamp(v, this.min, this.max);
-    if (Math.abs(v - this.def) < (this.max - this.min) * 0.02) v = this.def;  // detent at the default
+    if (Math.abs(this.toPos(v) - this.toPos(this.def)) < 0.02) v = this.def;  // detent at the default
     if (v === this.value) return;
     this.value = v; this.render(); this.onChange(v);
   }
   render() {
-    const toAng = v => -135 + 270 * (v - this.min) / (this.max - this.min);
-    const a = toAng(this.value), a0 = toAng(this.def <= this.min ? this.min : this.def);
+    const toAng = v => -135 + 270 * this.toPos(v);
+    const a = toAng(this.value), a0 = toAng(this.center ? this.def : this.min);  // level knobs fill from the left
     this.ind.setAttribute('transform', `rotate(${a} 20 20)`);
     const pt = ang => { const r = (ang - 90) * Math.PI / 180; return `${20 + 15 * Math.cos(r)} ${20 + 15 * Math.sin(r)}`; };
     const [from, to] = a0 < a ? [a0, a] : [a, a0];
@@ -343,6 +223,125 @@ class FxUnit {
   }
 }
 
+// ---------- deck engine ----------
+// A Player looks like an <audio> element to the deck code (currentTime, paused,
+// play(), playbackRate, preservesPitch, duration) but plays decoded PCM through
+// DeckDSP (deck-dsp.js): on the audio thread via AudioWorklet where the page is a
+// secure context, otherwise through a ScriptProcessor callback (plain-http pages,
+// e.g. an iPad on the LAN, can't use AudioWorklet).
+let workletReady = null;
+const forceScriptProcessor = new URLSearchParams(location.search).has('sp') || store.get('engine') === 'sp';
+function loadWorklet() {
+  if (!workletReady) {
+    // Fall back if the worklet can't load or never answers (seen in headless browsers).
+    workletReady = (!forceScriptProcessor && ctx.audioWorklet)
+      ? Promise.race([ctx.audioWorklet.addModule('deck-dsp.js').then(() => true, () => false),
+        new Promise(ok => setTimeout(() => ok(false), 3000))])
+      : Promise.resolve(false);
+  }
+  return workletReady;
+}
+
+class Player {
+  constructor() {
+    this.node = null; this.port = null; this.dsp = null;
+    this._playing = false; this._rate = 1; this.keylock = true; this.frames = 0; this.sr = 48000;
+    this.st = { pos: 0, playing: false, ended: false, rate: 0, t: 0 };
+    this.handlers = { ended: [] };
+  }
+  async attach() {
+    const worklet = await loadWorklet();
+    if (worklet) {
+      this.node = new AudioWorkletNode(ctx, 'deck-processor', { numberOfInputs: 0, outputChannelCount: [2] });
+      this.port = this.node.port;
+      this.port.onmessage = e => this.update(e.data);
+      this.kind = 'worklet';
+    } else {
+      this.dsp = new DeckDSP(ctx.sampleRate);
+      this.node = ctx.createScriptProcessor(2048, 1, 2);
+      this.node.onaudioprocess = e => {
+        const o = e.outputBuffer;
+        this.dsp.process(o.getChannelData(0), o.getChannelData(1), o.length);
+        this.update({ ...this.dsp.state(), t: ctx.currentTime });
+      };
+      this.kind = 'scriptprocessor';
+    }
+    this.sr = ctx.sampleRate;
+    this.post({ type: 'set', playing: this._playing, rate: this._rate, keylock: this.keylock });
+    return this.node;
+  }
+  post(m, transfer) { if (this.port) this.port.postMessage(m, transfer || []); else if (this.dsp) this.dsp.handle(m); }
+  update(st) {
+    const wasEnded = this.st.ended;
+    this.st = st;
+    this._playing = st.playing || (this._playing && this.scratching);
+    if (st.ended && !wasEnded) { this._playing = false; this.handlers.ended.forEach(f => f()); }
+  }
+  addEventListener(type, f) { (this.handlers[type] = this.handlers[type] || []).push(f); }
+  load(stems, frames, { offset = 0, keepPos = false } = {}) {
+    this.frames = frames;
+    if (!keepPos) this.st = { pos: 0, playing: false, ended: false, rate: 0, t: ctx.currentTime };
+    this.post({ type: 'load', stems, length: frames, offset, keepPos }, stems.map(s => s.data.buffer));
+  }
+  unload() { this.frames = 0; this._playing = false; this.post({ type: 'load', stems: [], length: 0 }); this.st = { pos: 0, playing: false, ended: false, rate: 0, t: 0 }; }
+  get duration() { return this.frames ? this.frames / this.sr : NaN; }
+  get readyState() { return this.frames ? 4 : 0; }
+  get paused() { return !this._playing; }
+  get currentTime() {
+    const s = this.st, ahead = s.playing || this.scratching ? Math.max(0, (ctx ? ctx.currentTime : 0) - s.t) * s.rate : 0;
+    return clamp(s.pos + ahead, 0, this.duration || 0);
+  }
+  set currentTime(v) {
+    v = clamp(v, 0, this.duration || 0);
+    this.st = { ...this.st, pos: v, t: ctx ? ctx.currentTime : 0, ended: false };
+    this.post({ type: 'seek', pos: v });
+  }
+  play() {
+    if (!this.frames) return Promise.reject(Object.assign(new Error('not loaded'), { name: 'NotLoaded' }));
+    this._playing = true; this.st = { ...this.st, playing: true, rate: this._rate, t: ctx.currentTime, ended: false };
+    this.post({ type: 'set', playing: true });
+    return Promise.resolve();
+  }
+  pause() { this._playing = false; this.st = { ...this.st, pos: this.currentTime, playing: false, t: ctx ? ctx.currentTime : 0 }; this.post({ type: 'set', playing: false }); }
+  get playbackRate() { return this._rate; }
+  set playbackRate(r) { if (r === this._rate) return; this.st = { ...this.st, pos: this.currentTime, t: ctx ? ctx.currentTime : 0, rate: this.st.playing ? r : 0 }; this._rate = r; this.post({ type: 'set', rate: r }); }
+  set preservesPitch(b) { this.keylock = b; this.post({ type: 'set', keylock: b }); }
+  get preservesPitch() { return this.keylock; }
+  set webkitPreservesPitch(b) { this.preservesPitch = b; }
+  setLoop(loop) { this.post({ type: 'set', loop: loop ? { start: loop.start, end: loop.end } : null }); }
+  setGains(gains) { this.post({ type: 'set', gains }); }
+  scratch(on, target, playing) {
+    this.scratching = on;
+    const m = { type: 'scratch', on, target };
+    if (!on) { m.playing = playing; this._playing = playing; }
+    this.post(m);
+    if (target != null) this.st = { ...this.st, pos: target, t: ctx.currentTime, rate: 0 };
+  }
+}
+
+// Analysis worker: waveform, beats and PCM conversion off the main thread.
+const analyzer = {
+  seq: 0, waiting: new Map(),
+  worker: null,
+  run(msg, transfer) {
+    if (!this.worker) {
+      this.worker = new Worker('analysis.js');
+      this.worker.onmessage = e => { const w = this.waiting.get(e.data.id); this.waiting.delete(e.data.id); w && w(e.data); };
+    }
+    const id = ++this.seq;
+    return new Promise(ok => { this.waiting.set(id, ok); this.worker.postMessage({ ...msg, id }, transfer); });
+  },
+  // Copies the channels out of an AudioBuffer (the copies move to the worker).
+  channels(buf) {
+    const ch0 = buf.getChannelData(0).slice(), ch1 = (buf.numberOfChannels > 1 ? buf.getChannelData(1) : buf.getChannelData(0)).slice();
+    return { msg: { ch0, ch1, sr: buf.sampleRate }, transfer: [ch0.buffer, ch1.buffer] };
+  },
+};
+
+const STEM_NAMES = ['vocals', 'other', 'bass', 'drums'];
+const MAX_TRACK_SECONDS = 30 * 60;  // decoded PCM for longer sets would exhaust an iPad's memory  // rekordbox: VOCAL, INST, BASS, DRUMS
+const stemUrl = (id, name) => `/api/stem/${id}/${name}?t=${encodeURIComponent(token())}`;
+
 // ---------- decks ----------
 const PAD_COLORS = ['#e8364f', '#f0a030', '#e6d32e', '#3fcf5a', '#2fc0d6', '#2d7ff9', '#9b59f0', '#e85fb4'];
 const PAD_LOOPS = [1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32];
@@ -359,22 +358,23 @@ class Deck {
     this.root = $(`.deck[data-deck=${letter}]`);
     this.root.append($('#deckTpl').content.cloneNode(true));
     $('.deck-num', this.root).textContent = this.num;
-    this.el = new Audio();
-    this.el.preload = 'auto';
-    this.el.preservesPitch = this.el.webkitPreservesPitch = true;
+    this.el = new Player();
     this.track = null; this.cue = 0; this.hot = Array(8).fill(null);
     this.bpm = 0; this.firstBeat = 0; this.tempo = 0; this.keyLock = true; this.synced = false; this.isMaster = false;
     this.loop = null; this.loopBeats = 4; this.manualIn = null; this.mode = 'hot'; this.wave = null; this.bend = 0;
     this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = [];
+    this.stemOn = { vocals: true, other: true, bass: true, drums: true }; this.stemsReady = false;
     this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
     this.color = letter === 'A' ? '#2d7ff9' : '#e8a13a';
     this.bindUi();
   }
 
   connect() {
-    if (this.chain) return;
+    return this._connecting || (this._connecting = this.buildChain());
+  }
+  async buildChain() {
     const c = audio();
-    const src = c.createMediaElementSource(this.el);
+    const src = await this.el.attach();
     const trim = c.createGain();
     const low = Object.assign(c.createBiquadFilter(), { type: 'lowshelf' }); low.frequency.value = 200;
     const mid = Object.assign(c.createBiquadFilter(), { type: 'peaking' }); mid.frequency.value = 1000; mid.Q.value = 0.8;
@@ -400,7 +400,9 @@ class Deck {
       tempo: $('.tempo-fader', r), sync: $('.sync', r), masterBtn: $('.master-btn', r),
       padGrid: $('.pad-grid', r), loopbox: $('.loopbox', r), loopLen: $('.loop-len', r), au: $('.loop-au', r), ma: $('.loop-ma', r),
       slip: $('.slip', r), quant: $('.quant', r), mt: $('.mt', r),
+      stemRow: $('.stem-row', r), stemStatus: $('.stem-status', r), stemBtns: $$('.stem', r),
     };
+    this.ui.stemBtns.forEach(b => b.addEventListener('click', () => this.toggleStem(b.dataset.stem)));
     for (let i = 0; i < 8; i++) {
       const p = document.createElement('button');
       p.className = 'pad'; p.style.setProperty('--pc', PAD_COLORS[i]);
@@ -463,48 +465,95 @@ class Deck {
   }
 
   async load(meta) {
-    this.connect();
+    await this.connect();
     this.el.pause();
-    if (this.blobUrl) { URL.revokeObjectURL(this.blobUrl); this.blobUrl = null; }
     this.track = meta; this.cue = 0; this.hot.fill(null); this.loop = null; this.manualIn = null; this.bpm = 0; this.wave = null; this.overviewImg = null;
+    this.stemsReady = false; this.mixRef = null;
     this.ui.title.textContent = meta.title || meta.id;
     this.ui.artist.textContent = meta.channel || '';
     this.ui.bpm.textContent = '--.-';
     this.ui.play.classList.remove('lit');
     this.root.classList.add('loaded');
+    this.el.unload();
     this.el.playbackRate = this.rate;
-    this.renderPads(); this.renderLoop();
-    if ((meta.duration || 0) > MAX_ANALYSIS_SECONDS) {
-      this.el.src = audioUrl(meta.id);
-      this.setState('Long set: waveform and BPM skipped. Use TAP to set the tempo.');
+    this.renderPads(); this.renderLoop(); this.renderStems('Separating…');
+    if ((meta.duration || 0) > MAX_TRACK_SECONDS) {
+      this.setState(`Tracks over ${MAX_TRACK_SECONDS / 60} minutes are too long to load into the deck yet.`);
       return;
     }
     this.setState('Loading audio…');
     try {
-      // One download feeds both playback (as a blob) and analysis.
-      const res = await fetch(audioUrl(meta.id));
-      const bytes = await res.arrayBuffer();
+      const bytes = await (await fetch(audioUrl(meta.id))).arrayBuffer();
       if (this.track !== meta) return;
-      this.blobUrl = URL.createObjectURL(new Blob([bytes], { type: res.headers.get('Content-Type') || 'audio/mp4' }));
-      this.el.src = this.blobUrl;
-      this.el.playbackRate = this.rate;
-      this.setState('Analyzing…');
+      this.setState('Decoding…');
       const buf = await new Promise((ok, bad) => audio().decodeAudioData(bytes, ok, bad));
       if (this.track !== meta) return;
-      await new Promise(r => setTimeout(r));  // let the page paint before the heavier passes
-      this.wave = waveform(buf);
-      const beats = detectBeats(buf);
-      this.bpm = beats.bpm; this.firstBeat = beats.firstBeat;
+      this.setState('Analyzing…');
+      const { msg, transfer } = analyzer.channels(buf);
+      const r = await analyzer.run({ type: 'analyze', ...msg }, transfer);
+      if (this.track !== meta) return;
+      this.el.load([{ name: 'mix', data: r.pcm }], buf.length);
+      this.mixRef = r.ref;
+      this.wave = r.wave; this.bpm = r.bpm; this.firstBeat = r.firstBeat;
       this.setState('');
       this.renderBpm();
       if (!masterDeck() || masterDeck() === this) this.makeMaster();
       if (this.synced) this.sync();
       this.notifyFollowers();
+      this.fetchStems(meta);
     } catch (e) {
       if (this.track !== meta) return;
-      if (!this.el.src) this.el.src = audioUrl(meta.id);
-      this.setState('Could not analyze this track (it will still play).');
+      this.setState('Could not load this track: ' + (e.message || e));
     }
+  }
+
+  // Ask the helper for stems; when they're ready, swap them in without a gap.
+  async fetchStems(meta) {
+    let st;
+    try { st = await api(`/api/stems?id=${meta.id}`, { method: 'POST' }); } catch { return this.renderStems('Stems unavailable'); }
+    while (this.track === meta && (st.state === 'queued' || st.state === 'separating')) {
+      this.renderStems(st.state === 'queued' ? `Stems queued #${st.position}` : 'Separating stems… (about a minute)');
+      await new Promise(r => setTimeout(r, 2500));
+      try { st = await api(`/api/stems?id=${meta.id}`); } catch { return this.renderStems('Stems unavailable'); }
+    }
+    if (this.track !== meta) return;
+    if (st.state !== 'ready') return this.renderStems(st.state === 'unavailable' ? 'Stems not installed' : 'Stems failed', st.error);
+    this.renderStems('Loading stems…');
+    try {
+      const stems = [], refs = [];
+      for (const name of STEM_NAMES) {
+        const bytes = await (await fetch(stemUrl(meta.id, name))).arrayBuffer();
+        const buf = await new Promise((ok, bad) => audio().decodeAudioData(bytes, ok, bad));
+        if (this.track !== meta) return;
+        const { msg, transfer } = analyzer.channels(buf);
+        const r = await analyzer.run({ type: 'pcm', ...msg }, transfer);
+        stems.push({ name, data: r.pcm, gain: this.stemOn[name] ? 1 : 0 });
+        refs.push(r.ref);
+      }
+      if (this.track !== meta) return;
+      const sum = new Float32Array(Math.min(...refs.map(r => r.length)));
+      for (const r of refs) for (let i = 0; i < sum.length; i++) sum[i] += r[i];
+      const { offset } = this.mixRef ? await analyzer.run({ type: 'align', mix: this.mixRef, stems: sum }, []) : { offset: 0 };
+      if (this.track !== meta) return;
+      this.el.load(stems, this.el.frames, { offset, keepPos: true });
+      this.stemsReady = true;
+      this.renderStems();
+    } catch (e) {
+      if (this.track === meta) this.renderStems('Stems failed', e.message);
+    }
+  }
+
+  toggleStem(name) {
+    if (!this.stemsReady) return;
+    this.stemOn[name] = !this.stemOn[name];
+    this.el.setGains({ [name]: this.stemOn[name] ? 1 : 0 });
+    this.renderStems();
+  }
+  renderStems(status, detail) {
+    this.ui.stemRow.classList.toggle('ready', !!this.stemsReady);
+    this.ui.stemStatus.textContent = this.stemsReady ? '' : (status || '');
+    this.ui.stemStatus.title = detail || '';
+    for (const b of this.ui.stemBtns) b.classList.toggle('off', !this.stemOn[b.dataset.stem]);
   }
 
   togglePlay() {
@@ -512,7 +561,7 @@ class Deck {
     audio();
     if (this.el.paused) {
       this.el.play().catch(e => {
-        if (e.name === 'AbortError') return;
+        if (e.name === 'AbortError' || e.name === 'NotLoaded') return;
         this.setState('Tap play again to start audio.');
         this.ui.play.classList.remove('lit');
       });
@@ -708,8 +757,7 @@ class Deck {
         wasPlaying = !this.el.paused; pos = this.el.currentTime;
         this.startSlip();
         this.scratching = true; this.scratchPos = pos;
-        this.el.preservesPitch = this.el.webkitPreservesPitch = false;
-        this.el.pause();
+        this.el.scratch(true, pos);
       }
     });
     ring.addEventListener('pointermove', e => {
@@ -723,19 +771,10 @@ class Deck {
         this.el.playbackRate = this.rate * (1 + this.bend);
         return;
       }
-      const dPos = d / (2 * Math.PI) * SECONDS_PER_JOG_TURN;
-      pos = clamp(pos + dPos, 0, this.el.duration || 0);
+      // The engine chases this target, so the audio follows the hand in both directions.
+      pos = clamp(pos + d / (2 * Math.PI) * SECONDS_PER_JOG_TURN, 0, this.el.duration || 0);
       this.scratchPos = pos;
-      const speed = dPos / dt;
-      if (speed > 0.08) {
-        // Moving forward: play at the hand's speed so the scratch is audible.
-        this.el.playbackRate = clamp(speed, 0.25, 4);
-        if (Math.abs(this.el.currentTime - pos) > 0.12) this.el.currentTime = pos;
-        if (this.el.paused) this.el.play().catch(() => {});
-      } else {
-        if (!this.el.paused) this.el.pause();
-        this.el.currentTime = pos;
-      }
+      this.el.scratch(true, pos);
     });
     const end = e => {
       if (e.pointerId !== active) return;
@@ -743,10 +782,8 @@ class Deck {
       this.bend = 0;
       if (mode === 'scratch') {
         this.scratching = false;
-        this.el.preservesPitch = this.el.webkitPreservesPitch = this.keyLock;
-        this.el.currentTime = pos;
+        this.el.scratch(false, pos, wasPlaying);
         this.endSlip();
-        if (wasPlaying) this.el.play().catch(() => {}); else this.el.pause();
       }
       this.el.playbackRate = this.rate;
       mode = null;
@@ -769,13 +806,10 @@ class Deck {
 
   tick(now) {
     const el = this.el, dur = el.duration || 0, t = this.position;
-    if (this.loop && !this.scratching && t >= this.loop.end) {
-      // Wrap when playback runs into the loop end; a seek far past it exits the loop instead.
-      if (t - this.loop.end < 0.3) el.currentTime = this.loop.start + (t - this.loop.end);
-      else this.exitLoop();
-    }
+    // The engine wraps loops at the exact sample; a seek far past the end exits the loop.
+    if (this.loop !== this.sentLoop) { this.sentLoop = this.loop; el.setLoop(this.loop); }
+    if (this.loop && !this.scratching && t > this.loop.end + 0.3) this.exitLoop();
     if (this.bend && !this.scratching && now - (this.lastJogMove || 0) > 80) { this.bend = 0; el.playbackRate = this.rate; }
-    if (this.scratching && now - (this.lastJogMove || 0) > 80 && !el.paused) el.pause();
     const playing = !el.paused && !this.scratching;
     this.root.classList.toggle('playing', playing);
     if (!this.previewing) this.ui.play.classList.toggle('lit', playing || (this.scratching && this.ui.play.classList.contains('lit')));

@@ -46,6 +46,11 @@ def make_fixture():
         w.writeframes(bytes(frames))
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(TMP / "track.wav"), "-c:a", "aac", str(FIXTURE)],
                    check=True)
+    # Stems: the kick track as "drums", near-silence for the rest.
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(TMP / "track.wav"), "-b:a", "192k", str(TMP / "drums.mp3")], check=True)
+    for name in ("vocals", "bass", "other"):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(TMP / "track.wav"), "-af", "volume=0.01", "-b:a", "192k",
+                        str(TMP / f"{name}.mp3")], check=True)
 
 
 FAKE = TMP / "fake-yt-dlp"
@@ -63,11 +68,25 @@ print(json.dumps({{"id": vid, "title": "Kick Test 120", "channel": "tubedeck", "
 """)
 FAKE.chmod(FAKE.stat().st_mode | stat.S_IEXEC)
 
+# Fake Demucs: copies pre-made MP3 stems (made from the fixture in make_fixture) into place.
+FAKE_DEMUCS = TMP / "fake-demucs"
+FAKE_DEMUCS.write_text(f"""#!{sys.executable}
+import os, shutil, sys
+args = sys.argv[1:]
+out, src = args[args.index("-o") + 1], args[-1]
+d = os.path.join(out, "htdemucs", os.path.splitext(os.path.basename(src))[0])
+os.makedirs(d, exist_ok=True)
+for name in ("vocals", "drums", "bass", "other"):
+    shutil.copy(os.path.join({str(TMP)!r}, name + ".mp3"), os.path.join(d, name + ".mp3"))
+""")
+FAKE_DEMUCS.chmod(FAKE_DEMUCS.stat().st_mode | stat.S_IEXEC)
+
 os.environ.update({
     "TUBEDECK_HOME": str(TMP / "home"),
     "TUBEDECK_YTDLP": str(FAKE),
     "TUBEDECK_MIN_GAP": "0.2",
     "TUBEDECK_SKIP_YTDLP_CHECK": "1",
+    "TUBEDECK_DEMUCS": str(FAKE_DEMUCS),
 })
 sys.path.insert(0, str(ROOT))
 import server  # noqa: E402
@@ -160,6 +179,7 @@ class BrowserSmoke(unittest.TestCase):
             a = i / 8 * math.pi / 2
             pg.mouse.move(cx + r * 0.5 * math.cos(a), cy + r * 0.5 * math.sin(a))
         pg.mouse.up()
+        pg.wait_for_timeout(100)
         moved = pg.evaluate("decks.A.el.currentTime") - start
         self.assertAlmostEqual(moved, 1.8 / 4, delta=0.15)
         self.assertFalse(pg.evaluate("decks.A.scratching"))
@@ -174,12 +194,26 @@ class BrowserSmoke(unittest.TestCase):
         pg.wait_for_timeout(200)
         self.assertLess(pg.evaluate("decks.A.chain.low.gain.value"), -20)
 
-        # FX1 (assigned to deck 1) only receives audio while ON.
+        # Stems arrive after separation and swap in; a stem button mutes that stem.
+        pg.wait_for_function("decks.A.stemsReady", timeout=30000)
+        self.assertIn("ready", pg.get_attribute(".deck[data-deck=A] .stem-row", "class"))
+        pg.click(".deck[data-deck=A] .stem[data-stem=drums]")
+        self.assertIn("off", pg.get_attribute(".deck[data-deck=A] .stem[data-stem=drums]", "class"))
+        self.assertFalse(pg.evaluate("decks.A.stemOn.drums"))
+        pg.click(".deck[data-deck=A] .stem[data-stem=drums]")
+
+        pg.evaluate("mixer.channels.A.knobs.low.set(0)")  # undo the LOW cut above: the fixture is all kick
+
+        # FX1 (assigned to deck 1) only receives audio while ON, and its echo is audible.
+        pg.evaluate("""() => { window.fxProbe = ctx.createAnalyser(); fx[0].wet.connect(window.fxProbe); }""")
         self.assertEqual(pg.evaluate("fx[0].input.gain.value"), 0)
         pg.click(".fxunit[data-fx='0'] .fx-on")
         pg.wait_for_timeout(200)
         self.assertGreater(pg.evaluate("fx[0].input.gain.value"), 0.9)
         self.assertAlmostEqual(pg.evaluate("fx[0].delay.delayTime.value"), 60 / pg.evaluate("decks.A.liveBpm"), delta=0.02)
+        pg.wait_for_timeout(800)
+        level = pg.evaluate("""() => { const b = new Float32Array(2048); fxProbe.getFloatTimeDomainData(b); return Math.max(...b.map(Math.abs)); }""")
+        self.assertGreater(level, 0.01, "echo output should be audible")
         pg.click(".fxunit[data-fx='0'] .fx-on")
 
         # A resting finger on the jog wheel stops bending the speed.
@@ -206,6 +240,30 @@ class BrowserSmoke(unittest.TestCase):
         self.assertGreater(pg.evaluate("decks.B.chain.xf.gain.value"), 0.95)
         # Thumbnails for the fake video ids 404 on YouTube's image server; anything else is a bug.
         self.assertEqual([e for e in self.errors if "i.ytimg.com" not in e], [])
+
+    def test_script_processor_engine(self):
+        """The plain-http fallback (iPad on the LAN) plays, seeks, loops and loads stems."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0", timeout=30000)
+        self.assertEqual(pg.evaluate("decks.A.el.kind"), "scriptprocessor")
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
+        pg.wait_for_function("decks.A.el.currentTime > 0.8")
+        pg.evaluate("decks.A.el.currentTime = 10")
+        pg.wait_for_function("decks.A.el.currentTime > 10.2 && decks.A.el.currentTime < 12")
+        pg.click(".deck[data-deck=A] .loop-len")  # 4-beat loop = 2 s
+        pg.wait_for_timeout(2600)
+        loop = pg.evaluate("decks.A.loop")
+        t = pg.evaluate("decks.A.el.currentTime")
+        self.assertTrue(loop["start"] - 0.05 <= t <= loop["end"] + 0.05, f"{t} outside {loop}")
+        pg.wait_for_function("decks.A.stemsReady", timeout=30000)
+        self.assertEqual([s["name"] for s in pg.evaluate("decks.A.el.dsp.stems.map(s => ({name: s.name}))")],
+                         ["vocals", "other", "bass", "drums"])
+        pg.click(".deck[data-deck=A] .stem[data-stem=vocals]")
+        pg.wait_for_function("decks.A.el.dsp.stems[0].gain === 0")
+        pg.close()
 
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()

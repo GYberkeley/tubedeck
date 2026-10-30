@@ -85,8 +85,8 @@
     <div class="fx-beat"><button class="arrow" data-step="-1" aria-label="Shorter">‹</button><span class="beat-val">1</span><button class="arrow" data-step="1" aria-label="Longer">›</button></div>
   </div>
   <div class="kn"><div class="knob" data-role="fx-level" data-min="0" data-max="1" data-value="0.6" data-default="0.6"></div><span>LEVEL</span></div>
+  <button class="fx-on" title="Turn the effect on or off">FX ON</button>
   <div class="fx-bpm"><span class="fx-bpm-val">120.0</span><div class="fx-bpm-btns"><button class="tog small auto on">AUTO</button><button class="tog small tap">TAP</button></div></div>
-  <button class="fx-on">ON</button>
 </template>
 
 <template id="deckTpl">
@@ -104,6 +104,14 @@
   </div>
   <div class="deck-state"></div>
   <canvas class="overview"></canvas>
+  <div class="stem-row">
+    <span class="stem-status"></span>
+    <span class="stem-label">STEMS</span>
+    <button class="stem" data-stem="vocals" style="--sc:#3fcf5a">VOCAL</button>
+    <button class="stem" data-stem="other" style="--sc:#e8364f">INST</button>
+    <button class="stem" data-stem="bass" style="--sc:#e85fb4">BASS</button>
+    <button class="stem" data-stem="drums" style="--sc:#5b6cf0">DRUMS</button>
+  </div>
   <div class="deck-lower">
     <div class="pads">
       <div class="pad-grid"></div>
@@ -139,11 +147,11 @@
 </template>
 
 <template id="channelTpl">
-  <div class="kn"><div class="knob" data-role="trim" data-min="0" data-max="2" data-value="1" data-default="1"></div><span>TRIM</span></div>
-  <div class="kn"><div class="knob" data-role="high" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>HIGH</span></div>
-  <div class="kn"><div class="knob" data-role="mid" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>MID</span></div>
-  <div class="kn"><div class="knob" data-role="low" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>LOW</span></div>
-  <div class="kn"><div class="knob" data-role="cfx" data-min="-1" data-max="1" data-value="0" data-default="0"></div><span>CFX</span></div>
+  <div class="kn"><div class="knob" data-role="trim" data-center data-min="0" data-max="2" data-value="1" data-default="1"></div><span>TRIM</span></div>
+  <div class="kn"><div class="knob" data-role="high" data-center data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>HIGH</span></div>
+  <div class="kn"><div class="knob" data-role="mid" data-center data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>MID</span></div>
+  <div class="kn"><div class="knob" data-role="low" data-center data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>LOW</span></div>
+  <div class="kn"><div class="knob" data-role="cfx" data-center data-min="-1" data-max="1" data-value="0" data-default="0"></div><span>CFX</span></div>
   <div class="fader-wrap">
     <div class="meter"><div class="meter-fill"></div></div>
     <input class="chfader" type="range" min="0" max="1" step="0.01" value="1" aria-label="Channel fader">
@@ -177,6 +185,8 @@
   </form>
 </dialog>
 
+<script src="analysis.js"></script>
+<script src="deck-dsp.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
