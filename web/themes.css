@@ -300,48 +300,41 @@
 [data-theme="waterfall"][data-under="on"] .tog:not(.on), [data-theme="waterfall"][data-under="on"] .stem { background-color: rgba(10, 52, 52, .88); }
 [data-theme="waterfall"][data-under="on"] .deck-head, [data-theme="waterfall"][data-under="on"] .stem-row { background: rgba(4, 30, 32, .5); }
 
-/* ---------- Mood themes: modern frosted glass over a flowing gradient ----------
-   The background is smooth, so real blur reads as soft colour (not smudged detail).
-   Panels float as rounded glass cards with hairline borders and small gaps. */
-[data-style="mood"] {
-  --panel: rgba(255, 255, 255, .07); --panel-mix: rgba(255, 255, 255, .09); --bar: rgba(8, 8, 16, .35);
-  --pad: rgba(255, 255, 255, .08); --panel-2: rgba(255, 255, 255, .1); --panel-3: rgba(255, 255, 255, .16);
-  --line: rgba(255, 255, 255, .16); --line-soft: rgba(255, 255, 255, .1);
-  --jog-bg: rgba(0, 0, 0, .28); --groove-a: rgba(255, 255, 255, .05); --groove-b: rgba(0, 0, 0, .12);
-  --text: #ffffff; --muted: rgba(255, 255, 255, .66);
-  --panel-blur: blur(26px) saturate(1.5);
-  --wave-scrim: rgba(0, 0, 0, .22); --wave-halo: rgba(0, 0, 0, .5);
+/* ---------- 3D world themes: the scene fills the screen; the waveform band is clear glass
+   over the skyline and the panels are smoked glass cards (no blur, so the scene stays crisp). */
+[data-style="world"] {
+  --panel: rgba(8, 10, 16, .5); --panel-mix: rgba(8, 10, 16, .58); --bar: rgba(6, 7, 12, .72);
+  --pad: rgba(255, 255, 255, .07); --panel-2: rgba(255, 255, 255, .09); --panel-3: rgba(255, 255, 255, .15);
+  --line: rgba(255, 255, 255, .16); --line-soft: rgba(255, 255, 255, .11);
+  --jog-bg: rgba(0, 0, 0, .35); --groove-a: rgba(255, 255, 255, .05); --groove-b: rgba(0, 0, 0, .14);
+  --text: #ffffff; --muted: rgba(255, 255, 255, .7);
+  --wave-bg: linear-gradient(rgba(0, 0, 0, .08), rgba(0, 0, 0, .28)); --wave-halo: rgba(0, 0, 0, .55);
 }
-[data-style="mood"] .console { gap: 8px; padding: 8px; }
-[data-style="mood"] .deck, [data-style="mood"] .mixer {
+[data-style="world"] .deck, [data-style="world"] .mixer, [data-style="world"] .fxbar, [data-style="world"] .browser { background-image: none; }
+[data-style="world"] .browser { background: rgba(6, 7, 12, .72); }
+[data-style="world"] .console { gap: 8px; padding: 8px; }
+[data-style="world"] .deck, [data-style="world"] .mixer {
   border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden;
   box-shadow: 0 10px 30px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .08);
 }
-[data-style="mood"] .fxbar { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
-[data-style="mood"] .waves { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
-[data-style="mood"] .browser { margin: 0 8px 8px; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
-[data-style="mood"] .xfader-row { background: transparent; border: 0; }
-[data-style="mood"] .topbar { background: var(--bar); border-bottom: 1px solid var(--line-soft); }
-[data-style="mood"] .tog, [data-style="mood"] .pad, [data-style="mood"] .loop-len, [data-style="mood"] .loop-arrows button,
-[data-style="mood"] .fx-type select, [data-style="mood"] .pad-mode, [data-style="mood"] .theme-pick, [data-style="mood"] .search input, [data-style="mood"] .search button {
+[data-style="world"] .fxbar { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .waves { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .browser { margin: 0 8px 8px; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .xfader-row { background: transparent; border: 0; }
+[data-style="world"] .topbar { background: var(--bar); border-bottom: 1px solid var(--line-soft); }
+[data-style="world"] .tog, [data-style="world"] .pad, [data-style="world"] .loop-len, [data-style="world"] .loop-arrows button,
+[data-style="world"] .fx-type select, [data-style="world"] .pad-mode, [data-style="world"] .theme-pick, [data-style="world"] .search input, [data-style="world"] .search button {
   border-radius: 9px; border-color: var(--line-soft);
 }
-[data-style="mood"] .tog.on { background: linear-gradient(135deg, var(--deck-a), var(--blue)); border-color: transparent; color: #0b0b12; }
-[data-style="mood"] .deck[data-deck=B] .tog.on { background: linear-gradient(135deg, var(--deck-b), var(--blue)); }
-[data-style="mood"] .fx-on.on { background: linear-gradient(135deg, var(--deck-a), var(--deck-b)); border-color: transparent; color: #0b0b12; }
-[data-style="mood"] .jog-ring { border-color: rgba(255, 255, 255, .22); box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 0 30px color-mix(in srgb, var(--c) 25%, transparent); }
-[data-style="mood"] .deck-head, [data-style="mood"] .stem-row { background: transparent; }
-[data-style="mood"] .overview { background: rgba(0, 0, 0, .25); border-color: transparent; }
-[data-style="mood"] .waves .zoom { background: transparent; border-right-color: var(--line-soft); }
-[data-style="mood"] .scene.front { display: none; }
+[data-style="world"] .tog.on { background: linear-gradient(135deg, var(--deck-a), var(--blue)); border-color: transparent; color: #0b0b12; }
+[data-style="world"] .deck[data-deck=B] .tog.on { background: linear-gradient(135deg, var(--deck-b), var(--blue)); }
+[data-style="world"] .fx-on.on { background: linear-gradient(135deg, var(--deck-a), var(--deck-b)); border-color: transparent; color: #0b0b12; }
+[data-style="world"] .jog-ring { border-color: rgba(255, 255, 255, .22); box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 0 30px color-mix(in srgb, var(--c) 25%, transparent); }
+[data-style="world"] .deck-head, [data-style="world"] .stem-row { background: transparent; }
+[data-style="world"] .overview { background: rgba(0, 0, 0, .25); border-color: transparent; }
+[data-style="world"] .waves .zoom { background: transparent; border-right-color: var(--line-soft); }
+[data-style="world"] .scene.front { display: none; }
 
-/* Aurora's lower half shows through clear night-glass panels. */
-[data-theme="aurora"][data-under="on"] {
-  --panel: rgba(4, 10, 18, .42); --panel-mix: rgba(4, 10, 18, .55); --bar: rgba(4, 9, 15, .88); --pad: rgba(14, 26, 38, .85);
-}
-[data-theme="aurora"][data-under="on"] .browser { background: rgba(4, 10, 18, .72); }
-[data-theme="aurora"][data-under="on"] .tog:not(.on), [data-theme="aurora"][data-under="on"] .stem { background-color: rgba(14, 26, 38, .88); }
-[data-theme="aurora"][data-under="on"] .deck-head, [data-theme="aurora"][data-under="on"] .stem-row { background: rgba(4, 10, 18, .5); }
 
 /* Themed controls that used fixed colours */
 .knob .arc { stroke: var(--blue); }

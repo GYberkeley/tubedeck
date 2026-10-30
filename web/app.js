@@ -1049,7 +1049,10 @@ function applyTheme(name) {
 // frame, so the audio thread is untouched. Each compiles on first use; time advances
 // at the master deck's tempo and `beat` is the master deck's beat phase.
 class ShaderLayer {
-  constructor(selector, scenes, maxScale) { Object.assign(this, { selector, scenes, maxScale, gl: null, progs: {}, scene: null, t: 0, last: 0 }); }
+  // budget caps the drawn pixels; fps caps the frame rate (the 3D worlds are costly).
+  constructor(selector, scenes, { maxScale, budget = Infinity, fps = 60 }) {
+    Object.assign(this, { selector, scenes, maxScale, budget, fps, gl: null, progs: {}, scene: null, t: 0, last: 0, drawn: 0 });
+  }
   setActive(name) {
     this.scene = this.scenes[name] ? name : null;
     if (this.scene && !this.gl) this.init();
@@ -1075,12 +1078,14 @@ class ShaderLayer {
     return (this.progs[name] = { p, a, res: gl.getUniformLocation(p, 'res'), t: gl.getUniformLocation(p, 't'), beat: gl.getUniformLocation(p, 'beat') });
   }
   draw(now) {
-    if (!this.scene || !this.gl) return;
+    if (!this.scene || !this.gl || document.hidden) return;
+    if (now - this.drawn < 1000 / this.fps - 4) return;
+    this.drawn = now;
     const dt = Math.min(0.1, (now - (this.last || now)) / 1000); this.last = now;
     if (!matchMedia('(prefers-reduced-motion: reduce)').matches) this.t += dt * (sceneBpm || 120) / 120;
     const prog = this.program(this.scene);
     if (!prog) return;
-    const { gl, cv } = this, scale = Math.min(this.maxScale, window.devicePixelRatio || 1);
+    const { gl, cv } = this, scale = Math.min(this.maxScale, window.devicePixelRatio || 1, Math.sqrt(this.budget / Math.max(1, cv.clientWidth * cv.clientHeight)));
     const w = Math.round(cv.clientWidth * scale), h = Math.round(cv.clientHeight * scale);
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
@@ -1094,13 +1099,13 @@ class ShaderLayer {
 // Shader scenes (scenes.js), drawn on the GPU (one draw call each per frame, so the
 // audio thread is untouched): the waveform band, and for some themes a full-screen
 // scene behind the console, drawn at reduced resolution.
-const vista = new ShaderLayer('.scene.vista .water', SCENES, 1.25);
-const under = new ShaderLayer('.under', UNDER_SCENES, .6);
+const vista = new ShaderLayer('.scene.vista .water', SCENES, { maxScale: 1.25 });
+const under = new ShaderLayer('.under', UNDER_SCENES, { maxScale: .8, budget: 8e5, fps: 30 });
 function setScenes(name) {
   vista.setActive(name); under.setActive(name);
   document.documentElement.dataset.scene = vista.scene ? 'shader' : '';
   document.documentElement.dataset.under = under.scene ? 'on' : '';
-  document.documentElement.dataset.style = MOOD_THEMES.has(name) ? 'mood' : '';
+  document.documentElement.dataset.style = WORLD_THEMES.has(name) ? 'world' : '';
 }
 
 let sceneBpm = 0;
