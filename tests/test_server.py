@@ -1,6 +1,6 @@
 """Integration tests for the tubedeck helper.
 
-A fake yt-dlp script stands in for YouTube, so these run offline and fast:
+Fake yt-dlp and Demucs scripts stand in for YouTube and the model, so these run offline and fast:
     python3 -m unittest discover -s tests
 """
 
@@ -54,12 +54,39 @@ print(json.dumps({{"id": vid, "title": "Track " + vid, "channel": "Chan", "durat
 """)
 FAKE.chmod(FAKE.stat().st_mode | stat.S_IEXEC)
 
+FAKE_DEMUCS = TMP / "fake-demucs"
+STEM_CALLS = TMP / "stem-calls.log"
+# The fake Demucs logs every call, then writes four small stems to <o>/htdemucs/<track>/,
+# failing for inputs named badStem*, and on -d mps for inputs named noMps*.
+FAKE_DEMUCS.write_text(f"""#!{sys.executable}
+import json, os, sys
+args = sys.argv[1:]
+src, out = args[-1], args[args.index("-o") + 1]
+dev = args[args.index("-d") + 1] if "-d" in args else None
+track = os.path.splitext(os.path.basename(src))[0]
+with open({str(STEM_CALLS)!r}, "a") as f:
+    f.write(json.dumps({{"track": track, "device": dev, "args": args}}) + "\\n")
+if "badStem" in track:
+    sys.stderr.write("Traceback (most recent call last):\\nRuntimeError: model exploded\\n")
+    sys.exit(1)
+if "noMps" in track and dev == "mps":
+    sys.stderr.write("NotImplementedError: op not supported on MPS\\n")
+    sys.exit(1)
+d = os.path.join(out, "htdemucs", track)
+os.makedirs(d)
+for name in ("vocals", "drums", "bass", "other"):
+    with open(os.path.join(d, name + ".mp3"), "wb") as f:
+        f.write((name + ":" + track).encode() * 100)
+""")
+FAKE_DEMUCS.chmod(FAKE_DEMUCS.stat().st_mode | stat.S_IEXEC)
+
 os.environ.update({
     "TUBEDECK_HOME": str(TMP / "home"),
     "TUBEDECK_YTDLP": str(FAKE),
     "TUBEDECK_MIN_GAP": "0.6",
     "TUBEDECK_SEARCH_WAIT": "0.3",
     "TUBEDECK_SKIP_YTDLP_CHECK": "1",
+    "TUBEDECK_DEMUCS": str(FAKE_DEMUCS),
 })
 sys.path.insert(0, str(ROOT))
 import server  # noqa: E402  (must import after the environment is set)
@@ -69,6 +96,17 @@ def calls():
     if not CALLS.exists():
         return []
     return [json.loads(line) for line in CALLS.read_text().splitlines()]
+
+
+def stem_calls(track):
+    if not STEM_CALLS.exists():
+        return []
+    return [c for c in map(json.loads, STEM_CALLS.read_text().splitlines()) if c["track"] == track]
+
+
+def fake_audio(vid):
+    (server.CACHE / f"{vid}.m4a").write_bytes(b"x" * 100)
+    (server.CACHE / f"{vid}.json").write_text(json.dumps({"id": vid, "title": "Local " + vid}))
 
 
 class HelperTest(unittest.TestCase):
@@ -105,6 +143,15 @@ class HelperTest(unittest.TestCase):
                 return st
             time.sleep(0.1)
         self.fail(f"{vid} never finished")
+
+    def wait_stems(self, vid, timeout=15):
+        end = time.time() + timeout
+        while time.time() < end:
+            st = json.loads(self.req(f"/api/stems?id={vid}")[2])
+            if st["state"] not in ("queued", "separating"):
+                return st
+            time.sleep(0.05)
+        self.fail(f"stems for {vid} never finished")
 
     def test_api_requires_pairing_code(self):
         code, _, body = self.req("/api/ping", token=False)
@@ -293,6 +340,92 @@ class HelperTest(unittest.TestCase):
             t.release()
         self.assertEqual(len(json.loads((home / "throttle.json").read_text())["recent"]), 1)
         self.assertFalse((home / "throttle.tmp").exists())
+
+    def test_stems_unavailable_without_demucs(self):
+        with mock.patch.object(server, "DEMUCS", [str(TMP / "no-such-python"), "-m", "demucs"]):
+            fake_audio("noDemucs001")
+            for method in ("GET", "POST"):
+                st = json.loads(self.req("/api/stems?id=noDemucs001", method)[2])
+                self.assertEqual(st["state"], "unavailable")
+                self.assertIn("scripts/install-stems.sh", st["error"])
+            self.assertFalse(json.loads(self.req("/api/ping")[2])["stems"]["available"])
+        self.assertTrue(json.loads(self.req("/api/ping")[2])["stems"]["available"])
+
+    def test_stems_need_downloaded_audio(self):
+        self.assertEqual(json.loads(self.req("/api/stems?id=notDl000001")[2])["state"], "none")
+        st = json.loads(self.req("/api/stems?id=notDl000001", "POST")[2])
+        self.assertEqual(st["state"], "error")
+        self.assertIn("Download the track", st["error"])
+        self.assertEqual(stem_calls("notDl000001"), [])
+
+    def test_separate_then_serve_stems(self):
+        vid = "stemTest001"
+        fake_audio(vid)
+        yt_before, recent_before = len(calls()), list(server.throttle.recent)
+        code, _, body = self.req(f"/api/stems?id={vid}", "POST")
+        self.assertEqual(code, 200)
+        self.assertIn(json.loads(body)["state"], ("queued", "separating", "ready"))
+        st = self.wait_stems(vid)
+        self.assertEqual(st, {"state": "ready", "error": None, "stems": ["vocals", "drums", "bass", "other"]})
+        args = stem_calls(vid)[0]["args"]
+        self.assertEqual(args[:4], ["-n", "htdemucs", "--mp3", "--mp3-bitrate"])
+        self.assertEqual(list(server.HOME.glob("stems-*")), [])  # temp output cleaned up
+        track = next(t for t in json.loads(self.req("/api/library")[2])["tracks"] if t["id"] == vid)
+        self.assertTrue(track["stems"])
+
+        code, headers, body = self.req(f"/api/stem/{vid}/drums", headers={"Range": "bytes=0-5"})
+        self.assertEqual((code, body), (206, b"drums:"))
+        self.assertEqual(headers["Content-Type"], "audio/mpeg")
+        self.assertEqual(headers["Content-Range"], f"bytes 0-5/{len('drums:' + vid) * 100}")
+        self.assertEqual(headers["Cache-Control"], "private, max-age=31536000")
+        self.assertEqual(self.req(f"/api/stem/{vid}/vocals")[2], f"vocals:{vid}".encode() * 100)
+
+        self.req(f"/api/stems?id={vid}", "POST")  # already separated: no second run
+        time.sleep(0.2)
+        self.assertEqual(len(stem_calls(vid)), 1)
+        # Separation is local work: it never reaches YouTube or spends the throttle.
+        self.assertEqual(len(calls()), yt_before)
+        self.assertEqual(list(server.throttle.recent), recent_before)
+
+    def test_stem_routes_require_pairing_code(self):
+        vid = "stemAuth001"
+        fake_audio(vid)
+        for path, method in [(f"/api/stems?id={vid}", "GET"), (f"/api/stems?id={vid}", "POST"),
+                             (f"/api/stem/{vid}/vocals", "GET")]:
+            self.assertEqual(self.req(path, method, token=False)[0], 401)
+        self.assertEqual(stem_calls(vid), [])
+        self.req(f"/api/stems?id={vid}", "POST")
+        self.assertEqual(self.wait_stems(vid)["state"], "ready")
+        self.assertEqual(self.req(f"/api/stem/{vid}/bass?t={server.TOKEN}", token=False)[0], 200)
+
+    def test_rejects_bad_stem_requests(self):
+        for path, method in [("/api/stems?id=short", "GET"), ("/api/stems?id=../../etc", "POST")]:
+            self.assertEqual(self.req(path, method)[0], 400)
+        for path in ["/api/stem/stemBad0001/piano", "/api/stem/..%2F..%2Fx/vocals",
+                     "/api/stem/stemBad0001/vocals/x", "/api/stem/stemBad0001"]:
+            self.assertEqual(self.req(path)[0], 404)
+        code, _, body = self.req("/api/stem/stemBad0001/vocals")  # valid, but not separated
+        self.assertEqual((code, json.loads(body)["error"]), (404, "stems not ready"))
+
+    def test_mps_failure_retries_on_cpu(self):
+        vid = "noMps000001"
+        fake_audio(vid)
+        with mock.patch.object(server.separator, "device", "mps"):
+            self.req(f"/api/stems?id={vid}", "POST")
+            self.assertEqual(self.wait_stems(vid)["state"], "ready")
+            self.assertEqual([c["device"] for c in stem_calls(vid)], ["mps", "cpu"])
+            self.assertEqual(server.separator.device, "cpu")  # later jobs go straight to the CPU
+
+    def test_failed_separation_does_not_stop_the_queue(self):
+        fake_audio("badStem0001")
+        fake_audio("afterBad001")
+        self.req("/api/stems?id=badStem0001", "POST")
+        self.req("/api/stems?id=afterBad001", "POST")
+        st = self.wait_stems("badStem0001")
+        self.assertEqual(st["state"], "error")
+        self.assertIn("model exploded", st["error"])
+        self.assertEqual(self.wait_stems("afterBad001")["state"], "ready")
+        self.assertFalse(server.has_stems("badStem0001"))
 
     def test_pairing_code_is_redacted_from_logs(self):
         line = server.redact(f'"GET /api/audio/x?t={server.TOKEN} HTTP/1.1" 206 -')

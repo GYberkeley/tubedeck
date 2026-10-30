@@ -37,6 +37,16 @@ Searches don't queue behind downloads: if the helper is busy, the search returns
 
 Searches go through the helper by default. To search directly from the browser on your own free daily allowance (about 100 searches), add a YouTube Data API v3 key in Settings (⚙︎). The key is saved only in that browser. To get one: create a project at console.cloud.google.com, enable **YouTube Data API v3**, then create an API key under Credentials and restrict it to that API.
 
+## Stems (optional)
+
+The helper can split a downloaded track into four stems (vocals, drums, bass, other) with [Demucs](https://github.com/adefossez/demucs), so you can mute or isolate parts while you practice. Separation runs locally on this Mac (on the GPU via Metal when it can, otherwise the CPU). It never contacts YouTube and doesn't count against the throttle.
+
+```bash
+./scripts/install-stems.sh    # one-time: a venv in ~/.tubedeck/stems-venv with Demucs and PyTorch
+```
+
+The install downloads about 140 MB (PyTorch), and the htdemucs model (about 84 MB) downloads the first time you separate a track. A 6-minute track took about 75 seconds on an Apple Silicon Mac (GPU, first run including the model download). Stems are cached as MP3s in `~/.tubedeck/cache/stems/`, so each track is separated only once. Restart the helper after installing; it prints whether stems are available.
+
 ## Tests
 
 ```bash
