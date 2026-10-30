@@ -111,7 +111,10 @@ class BrowserSmoke(unittest.TestCase):
         pg.click("#list li[data-id=kickTrack01] .load.a")
         pg.wait_for_function("decks.A.bpm > 0", timeout=20000)
         bpm = pg.evaluate("decks.A.bpm")
-        self.assertAlmostEqual(bpm, BPM, delta=1.5)
+        self.assertAlmostEqual(bpm, BPM, delta=0.3)
+        # The beat grid sits on the kicks (one every 0.5 s from t=0 in the fixture).
+        first = pg.evaluate("decks.A.firstBeat")
+        self.assertLess(min(first % 0.5, 0.5 - first % 0.5), 0.02)
         self.assertIn("Kick Test", pg.inner_text(".deck[data-deck=A] .title"))
 
         pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
@@ -124,11 +127,54 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(pg.inner_text(".deck[data-deck=A] .bpm"), f"{bpm * 1.04:.1f}")
 
         # A beat loop wraps; a seek far past it exits the loop.
-        pg.click(".deck[data-deck=A] .mode[data-mode=loop]")
-        pg.dispatch_event(".deck[data-deck=A] .pad-grid .pad:nth-child(4)", "pointerdown")  # 4 beats
-        self.assertIsNotNone(pg.evaluate("decks.A.loop"))
+        pg.select_option(".deck[data-deck=A] .pad-mode", "loop")
+        pg.dispatch_event(".deck[data-deck=A] .pad-grid .pad:nth-child(5)", "pointerdown")  # 4 beats
+        self.assertEqual(pg.evaluate("decks.A.loop.beats"), 4)
+        self.assertAlmostEqual(pg.evaluate("decks.A.loop.end - decks.A.loop.start"), 4 * 60 / bpm, places=3)
         pg.evaluate("decks.A.el.currentTime = decks.A.loop.end + 5")
         pg.wait_for_function("decks.A.loop === null")
+
+        # The loop box: AU starts a loop of the shown length, the arrows halve it, AU again exits.
+        pg.click(".deck[data-deck=A] .loop-au")
+        self.assertEqual(pg.evaluate("decks.A.loop.beats"), 4)
+        pg.click(".deck[data-deck=A] .loop-half")
+        self.assertEqual(pg.evaluate("decks.A.loop.beats"), 2)
+        self.assertEqual(pg.inner_text(".deck[data-deck=A] .loop-len"), "2")
+        pg.click(".deck[data-deck=A] .loop-au")
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+
+        # Dragging the platter scratches: the track follows the finger.
+        box = pg.locator(".deck[data-deck=A] .jog-ring").bounding_box()
+        cx, cy, r = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2, box["width"] / 2
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")  # pause
+        start = pg.evaluate("decks.A.el.currentTime")
+        pg.mouse.move(cx + r * 0.5, cy)
+        pg.mouse.down()
+        self.assertTrue(pg.evaluate("decks.A.scratching"))
+        for i in range(1, 9):  # a quarter turn clockwise = forward
+            import math
+            a = i / 8 * math.pi / 2
+            pg.mouse.move(cx + r * 0.5 * math.cos(a), cy + r * 0.5 * math.sin(a))
+        pg.mouse.up()
+        moved = pg.evaluate("decks.A.el.currentTime") - start
+        self.assertAlmostEqual(moved, 1.8 / 4, delta=0.15)
+        self.assertFalse(pg.evaluate("decks.A.scratching"))
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")  # play again
+
+        # Turning the LOW knob down cuts the low shelf.
+        k = pg.locator(".channel[data-ch=A] .knob[data-role=low]").bounding_box()
+        pg.mouse.move(k["x"] + k["width"] / 2, k["y"] + k["height"] / 2)
+        pg.mouse.down(); pg.mouse.move(k["x"] + k["width"] / 2, k["y"] + 200); pg.mouse.up()
+        pg.wait_for_timeout(200)
+        self.assertLess(pg.evaluate("decks.A.chain.low.gain.value"), -20)
+
+        # FX1 (assigned to deck 1) only receives audio while ON.
+        self.assertEqual(pg.evaluate("fx[0].input.gain.value"), 0)
+        pg.click(".fxunit[data-fx='0'] .fx-on")
+        pg.wait_for_timeout(200)
+        self.assertGreater(pg.evaluate("fx[0].input.gain.value"), 0.9)
+        self.assertAlmostEqual(pg.evaluate("fx[0].delay.delayTime.value"), 60 / pg.evaluate("decks.A.liveBpm"), delta=0.02)
+        pg.click(".fxunit[data-fx='0'] .fx-on")
 
         # A resting finger on the jog wheel stops bending the speed.
         pg.evaluate("decks.A.bend = 0.1; decks.A.lastJogMove = performance.now(); decks.A.el.playbackRate = decks.A.rate * 1.1")
@@ -191,7 +237,7 @@ class BrowserSmoke(unittest.TestCase):
             overflow = pg.evaluate("document.documentElement.scrollWidth - window.innerWidth")
             self.assertLessEqual(overflow, 0, f"horizontal scroll at {w}px")
             xfader_bottom, browser_top = pg.evaluate(
-                "[document.querySelector('.xfader').getBoundingClientRect().bottom,"
+                "[document.querySelector('.xfader-row').getBoundingClientRect().bottom,"
                 " document.querySelector('.browser').getBoundingClientRect().top]")
             self.assertLessEqual(xfader_bottom, browser_top, f"track list covers the mixer at {w}px")
             pg.screenshot(path=str(Path(os.environ.get("SHOT_DIR", TMP)) / f"tubedeck-{w}x{h}.png"))

@@ -4,21 +4,36 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0d0f12">
+<meta name="theme-color" content="#000000">
 <title>tubedeck</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2316191e' stroke='%233fb6ff' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%233fb6ff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23111' stroke='%232d7ff9' stroke-width='3'/%3E%3Ccircle cx='16' cy='16' r='4' fill='%232d7ff9'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+
 <header class="topbar">
-  <div class="brand">tube<span>deck</span></div>
-  <form id="searchForm" class="search">
-    <input id="q" type="search" placeholder="Search YouTube or paste a link" autocomplete="off" enterkeyhint="search">
-    <button type="submit">Search</button>
-  </form>
+  <div class="mode-label">PERFORMANCE</div>
+  <button id="fxToggle" class="icon-tog on" title="Show or hide the FX panel" aria-pressed="true">FX</button>
+  <div class="brand">tube<b>deck</b></div>
+  <div class="spacer"></div>
   <div id="helperStatus" class="pill">connecting…</div>
-  <button id="settingsBtn" class="icon-btn" aria-label="Settings">⚙︎</button>
+  <button id="settingsBtn" class="gear" aria-label="Settings">⚙︎</button>
+  <div id="clock" class="clock">0:00</div>
 </header>
+
+<section id="fxbar" class="fxbar">
+  <div class="fxunit" data-fx="0"></div>
+  <div class="fxunit" data-fx="1"></div>
+</section>
+
+<section class="waves">
+  <div class="zoom">
+    <button id="zoomIn" aria-label="Zoom in">+</button>
+    <span class="rst">ZOOM</span>
+    <button id="zoomOut" aria-label="Zoom out">−</button>
+  </div>
+  <canvas id="waveCanvas"></canvas>
+</section>
 
 <main class="console">
   <section class="deck" data-deck="A"></section>
@@ -27,66 +42,111 @@
       <div class="channel" data-ch="A"></div>
       <div class="channel" data-ch="B"></div>
     </div>
-    <div class="master">
-      <label>Master<input id="master" type="range" min="0" max="1" step="0.01" value="0.85"></label>
-    </div>
-    <div class="xfader">
-      <span>A</span><input id="xfader" type="range" min="-1" max="1" step="0.01" value="0"><span>B</span>
+    <div class="mixer-bottom">
+      <div class="kn"><div class="knob" data-role="master" data-min="0" data-max="1" data-value="0.85" data-default="0.85"></div><span>MASTER</span></div>
     </div>
   </section>
   <section class="deck" data-deck="B"></section>
 </main>
 
+<section class="xfader-row">
+  <span>1</span><input id="xfader" type="range" min="-1" max="1" step="0.01" value="0" aria-label="Crossfader"><span>2</span>
+</section>
+
 <section class="browser">
-  <div class="tabs">
-    <button class="tab active" data-tab="results">Search results</button>
-    <button class="tab" data-tab="library">Downloaded</button>
+  <div class="browser-head">
+    <form id="searchForm" class="search">
+      <input id="q" type="search" placeholder="Search YouTube or paste a link" autocomplete="off" enterkeyhint="search">
+      <button type="submit">Search</button>
+    </form>
+    <div class="tabs">
+      <button class="tab active" data-tab="results">Search</button>
+      <button class="tab" data-tab="library">Collection</button>
+    </div>
     <div id="queueInfo" class="queue-info"></div>
   </div>
   <ul id="list" class="list"><li class="empty">Search for a track to get started.</li></ul>
 </section>
 
+<template id="fxTpl">
+  <div class="fx-name"></div>
+  <div class="fx-assign">
+    <button class="tog" data-assign="A">1</button>
+    <button class="tog" data-assign="B">2</button>
+    <button class="tog" data-assign="M">M</button>
+  </div>
+  <div class="fx-type">
+    <select aria-label="Effect">
+      <option value="echo">ECHO</option>
+      <option value="delay">DELAY</option>
+      <option value="reverb">REVERB</option>
+      <option value="flanger">FLANGER</option>
+    </select>
+    <div class="fx-beat"><button class="arrow" data-step="-1" aria-label="Shorter">‹</button><span class="beat-val">1</span><button class="arrow" data-step="1" aria-label="Longer">›</button></div>
+  </div>
+  <div class="kn"><div class="knob" data-role="fx-level" data-min="0" data-max="1" data-value="0.6" data-default="0.6"></div><span>LEVEL</span></div>
+  <div class="fx-bpm"><span class="fx-bpm-val">120.0</span><div class="fx-bpm-btns"><button class="tog small auto on">AUTO</button><button class="tog small tap">TAP</button></div></div>
+  <button class="fx-on">ON</button>
+</template>
+
 <template id="deckTpl">
   <div class="deck-head">
-    <div class="deck-letter"></div>
-    <div class="deck-title"><div class="title">No track loaded</div><div class="sub"></div></div>
-    <div class="deck-bpm"><div class="bpm">--.-</div><div class="bpm-label">BPM <button class="bpm-fix" data-f="0.5" aria-label="Halve BPM">½</button><button class="bpm-fix" data-f="2" aria-label="Double BPM">×2</button></div></div>
+    <div class="deck-num"></div>
+    <div class="disc-icon"></div>
+    <div class="deck-title"><div class="title">Not Loaded.</div><div class="artist"></div></div>
+    <div class="deck-time"><span class="remain">-00:00.0</span><span class="elapsed">00:00.0</span></div>
+    <div class="deck-bpm"><div class="bpm">--.-</div><div class="bpm-sub"><span class="tempo-pct">0.0%</span><button class="bpm-fix" data-f="0.5" aria-label="Halve BPM">½</button><button class="bpm-fix" data-f="2" aria-label="Double BPM">×2</button></div></div>
+    <div class="sync-col">
+      <button class="tog tap-bpm">TAP</button>
+      <button class="tog sync">BEAT SYNC</button>
+      <button class="tog master-btn">MASTER</button>
+    </div>
   </div>
   <div class="deck-state"></div>
-  <canvas class="overview" height="56"></canvas>
-  <div class="times"><span class="elapsed">0:00</span><span class="remain">-0:00</span></div>
-  <div class="deck-body">
+  <canvas class="overview"></canvas>
+  <div class="deck-lower">
+    <div class="pads">
+      <div class="pad-grid"></div>
+      <select class="pad-mode" aria-label="Pad mode">
+        <option value="hot">HOT CUE</option>
+        <option value="loop">BEAT LOOP</option>
+        <option value="jump">BEAT JUMP</option>
+      </select>
+    </div>
+    <div class="loopbox">
+      <div class="loop-len">4</div>
+      <div class="loop-arrows"><button class="loop-half" aria-label="Halve loop">‹</button><button class="loop-double" aria-label="Double loop">›</button></div>
+      <div class="loop-modes"><button class="tog loop-au" title="Auto beat loop">AU</button><button class="tog loop-ma" title="Manual loop: in, out, exit">MA</button></div>
+    </div>
     <div class="transport">
-      <button class="btn cue">CUE</button>
-      <button class="btn play">▶︎❙❙</button>
+      <button class="cue">CUE</button>
+      <button class="play" aria-label="Play or pause">▶︎</button>
     </div>
-    <div class="jog"><div class="jog-ring"><div class="jog-dot"></div></div></div>
-    <div class="tempo">
-      <input class="tempo-fader" type="range" min="-8" max="8" step="0.02" value="0" orient="vertical">
-      <div class="tempo-val">0.0%</div>
-      <button class="btn small reset">0</button>
-      <button class="btn small keylock on">KEY</button>
-      <button class="btn small sync">SYNC</button>
+    <div class="jog">
+      <div class="jog-ring">
+        <div class="jog-platter"><div class="jog-mark"></div></div>
+        <div class="jog-center"><div class="jog-time">0:00</div><div class="jog-pct">0.0% ±8</div></div>
+      </div>
     </div>
-  </div>
-  <div class="pads">
-    <div class="pad-modes">
-      <button class="btn small mode on" data-mode="hot">HOT CUE</button>
-      <button class="btn small mode" data-mode="loop">BEAT LOOP</button>
-      <button class="btn small mode" data-mode="clear">CLEAR</button>
+    <div class="side">
+      <button class="tog slip">SLIP</button>
+      <button class="tog quant on">Q</button>
+      <button class="tog mt on" title="Master tempo (key lock)">MT</button>
+      <input class="tempo-fader" type="range" min="-8" max="8" step="0.02" value="0" aria-label="Tempo">
+      <button class="tog small reset" title="Reset tempo">0</button>
     </div>
-    <div class="pad-grid"></div>
   </div>
 </template>
 
 <template id="channelTpl">
-  <div class="knob-row"><span>HI</span><input class="eq" data-band="high" type="range" min="-26" max="6" step="0.5" value="0"></div>
-  <div class="knob-row"><span>MID</span><input class="eq" data-band="mid" type="range" min="-26" max="6" step="0.5" value="0"></div>
-  <div class="knob-row"><span>LOW</span><input class="eq" data-band="low" type="range" min="-26" max="6" step="0.5" value="0"></div>
-  <div class="knob-row"><span>CFX</span><input class="cfx" type="range" min="-1" max="1" step="0.01" value="0"></div>
+  <div class="kn"><div class="knob" data-role="trim" data-min="0" data-max="2" data-value="1" data-default="1"></div><span>TRIM</span></div>
+  <div class="kn"><div class="knob" data-role="high" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>HIGH</span></div>
+  <div class="kn"><div class="knob" data-role="mid" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>MID</span></div>
+  <div class="kn"><div class="knob" data-role="low" data-min="-26" data-max="6" data-value="0" data-default="0"></div><span>LOW</span></div>
+  <div class="kn"><div class="knob" data-role="cfx" data-min="-1" data-max="1" data-value="0" data-default="0"></div><span>CFX</span></div>
   <div class="fader-wrap">
     <div class="meter"><div class="meter-fill"></div></div>
-    <input class="chfader" type="range" min="0" max="1" step="0.01" value="1" orient="vertical">
+    <input class="chfader" type="range" min="0" max="1" step="0.01" value="1" aria-label="Channel fader">
   </div>
   <div class="ch-label"></div>
 </template>
@@ -111,8 +171,8 @@
       </ol>
     </details>
     <div class="dialog-actions">
-      <button id="cancelSettings" type="button" class="btn">Cancel</button>
       <button id="saveSettings" value="save" class="btn primary">Save</button>
+      <button id="cancelSettings" type="button" class="btn">Cancel</button>
     </div>
   </form>
 </dialog>
