@@ -47,14 +47,14 @@ const beatLabel = b => b >= 1 ? String(b) : `1/${Math.round(1 / b)}`;
 
 // ---------- audio context ----------
 // Graph: deck chains -> mixBus -> master -> speakers; FX returns -> master.
-let ctx, master, mixBus;
+let ctx, master, mixBus, masterDry;
 function audio() {
   if (!ctx) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
     master = ctx.createGain();
     master.gain.value = knobs.master ? knobs.master.value : 0.85;
-    mixBus = ctx.createGain();
-    mixBus.connect(master);
+    mixBus = ctx.createGain(); masterDry = ctx.createGain();
+    mixBus.connect(masterDry).connect(master);
     master.connect(ctx.destination);
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
     fx.forEach(u => u.connect());
@@ -127,25 +127,59 @@ class Knob {
 }
 
 // ---------- beat FX ----------
+// Three kinds, like rekordbox's Beat FX:
+//   send   - adds a wet signal on top of the track (echo, delay, reverb, ...)
+//   insert - replaces the track while on (trans, filter, crush): the source's dry path is muted
+//   deck   - moves the deck itself (vinyl brake, backspin)
 const FX_BEATS = [1 / 8, 1 / 4, 1 / 2, 3 / 4, 1, 2, 4, 8];
+const FX_KIND = {
+  echo: 'send', delay: 'send', pingpong: 'send', spiral: 'send', reverb: 'send', flanger: 'send', phaser: 'send',
+  trans: 'insert', filter: 'insert', crush: 'insert', brake: 'deck', spin: 'deck',
+};
+const fxSources = () => ({ A: decks.A.chain?.xf, B: decks.B.chain?.xf, M: mixBus });
+
+// Mute a source's dry path while any insert effect assigned to it is on.
+function updateDry() {
+  if (!ctx) return;
+  const dry = { A: decks.A.chain?.dry, B: decks.B.chain?.dry, M: masterDry };
+  for (const src of ['A', 'B', 'M']) {
+    const muted = fx.some(u => u.on && FX_KIND[u.type] === 'insert' && u.assign[src]);
+    dry[src]?.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.005);
+  }
+}
+
+function crushCurve(bits) {
+  const n = 4096, curve = new Float32Array(n), steps = 2 ** bits;
+  for (let i = 0; i < n; i++) { const x = i / (n - 1) * 2 - 1; curve[i] = Math.round(x * steps / 2) / (steps / 2); }
+  return curve;
+}
+
 class FxUnit {
   constructor(i) {
     this.i = i; this.root = $(`.fxunit[data-fx="${i}"]`);
     this.root.append($('#fxTpl').content.cloneNode(true));
     $('.fx-name', this.root).textContent = `FX${i + 1}`;
     this.type = 'echo'; this.beatIx = 4; this.on = false; this.assign = { A: i === 0, B: i === 1, M: false };
-    this.auto = true; this.tapBpm = 120; this.taps = []; this.bpm = 120;
+    this.auto = true; this.tapBpm = 120; this.taps = []; this.bpm = 120; this.nodes = []; this.lfos = [];
     $$('[data-assign]', this.root).forEach(b => {
       b.classList.toggle('on', this.assign[b.dataset.assign]);
-      b.addEventListener('click', () => { this.assign[b.dataset.assign] = !this.assign[b.dataset.assign]; b.classList.toggle('on'); this.route(); });
+      b.addEventListener('click', () => {
+        if (this.on && FX_KIND[this.type] === 'deck') this.motion(false);
+        this.assign[b.dataset.assign] = !this.assign[b.dataset.assign]; b.classList.toggle('on');
+        this.route(); if (this.on && FX_KIND[this.type] === 'deck') this.motion(true);
+      });
     });
-    $('select', this.root).addEventListener('change', e => { this.type = e.target.value; this.build(); });
+    $('select', this.root).addEventListener('change', e => {
+      if (this.on && FX_KIND[this.type] === 'deck') this.motion(false);
+      this.type = e.target.value; this.build(); this.route();
+      if (this.on && FX_KIND[this.type] === 'deck') this.motion(true);
+    });
     $$('.arrow', this.root).forEach(b => b.addEventListener('click', () => {
       this.beatIx = clamp(this.beatIx + +b.dataset.step, 0, FX_BEATS.length - 1); this.renderBeat(); this.retime(true);
     }));
-    this.level = new Knob($('.knob', this.root), v => { if (this.wet) this.wet.gain.setTargetAtTime(v, ctx.currentTime, 0.02); });
+    this.level = new Knob($('.knob', this.root), () => this.applyLevel());
     this.onBtn = $('.fx-on', this.root);
-    this.onBtn.addEventListener('click', () => { this.on = !this.on; this.onBtn.classList.toggle('on', this.on); this.route(); });
+    this.onBtn.addEventListener('click', () => this.toggle());
     $('.auto', this.root).addEventListener('click', e => { this.auto = !this.auto; e.target.classList.toggle('on', this.auto); });
     $('.tap', this.root).addEventListener('click', () => {
       const now = performance.now();
@@ -159,37 +193,115 @@ class FxUnit {
   }
   get beats() { return FX_BEATS[this.beatIx]; }
   get seconds() { return Math.min(3.9, this.beats * 60 / this.bpm); }
+  get kind() { return FX_KIND[this.type]; }
   renderBeat() { $('.beat-val', this.root).textContent = beatLabel(this.beats); }
+
+  toggle() {
+    audio();
+    this.on = !this.on; this.onBtn.classList.toggle('on', this.on);
+    if (this.kind === 'deck') return this.motion(this.on);
+    if (this.on) this.alignLfos();
+    this.route();
+  }
+  // Vinyl brake / backspin act on the assigned decks themselves.
+  motion(on) {
+    const targets = this.assign.M ? ['A', 'B'] : ['A', 'B'].filter(L => this.assign[L]);
+    for (const L of targets) decks[L].el.motion(on ? this.type : null, this.beats * 60 / this.bpm);
+  }
 
   connect() {
     this.input = ctx.createGain(); this.input.gain.value = 0;
-    this.wet = ctx.createGain(); this.wet.gain.value = this.level.value;
+    this.wet = ctx.createGain();
     this.wet.connect(master);
     this.sends = {};
     this.build(); this.route();
   }
   build() {
     if (!ctx) return;
-    (this.nodes || []).forEach(n => { try { n.disconnect(); } catch {} if (n.stop) try { n.stop(); } catch {} });
+    for (const n of this.nodes) { try { n.disconnect(); } catch {} if (n.stop) try { n.stop(); } catch {} }
+    this.nodes = []; this.lfos = []; this.delay = this.delays = this.conv = this.shaper = null;
     this.input.disconnect();
-    const n = this.nodes = [];
-    const make = (fn, ...a) => { const node = ctx[fn](...a); n.push(node); return node; };
-    if (this.type === 'echo' || this.type === 'delay') {
+    const make = (fn, ...a) => { const node = ctx[fn](...a); this.nodes.push(node); return node; };
+    const lfo = (type, depth, target) => {
+      const o = make('createOscillator'), g = make('createGain');
+      o.type = type; g.gain.value = depth; o.connect(g).connect(target); o.start();
+      this.lfos.push({ osc: o, depth: g }); return { osc: o, depth: g };
+    };
+    const t = this.type, inp = this.input, wet = this.wet;
+    if (t === 'echo' || t === 'delay') {
       const d = this.delay = make('createDelay', 4), fb = make('createGain');
-      fb.gain.value = this.type === 'echo' ? 0.55 : 0.28;
-      this.input.connect(d); d.connect(this.wet); d.connect(fb);
-      if (this.type === 'echo') { const lp = make('createBiquadFilter'); lp.type = 'lowpass'; lp.frequency.value = 3500; fb.connect(lp).connect(d); }
+      fb.gain.value = t === 'echo' ? 0.55 : 0.28;
+      inp.connect(d); d.connect(wet); d.connect(fb);
+      if (t === 'echo') { const lp = make('createBiquadFilter'); lp.type = 'lowpass'; lp.frequency.value = 3500; fb.connect(lp).connect(d); }
       else fb.connect(d);
-    } else if (this.type === 'reverb') {
+    } else if (t === 'pingpong') {
+      // Repeats alternate left and right.
+      const dl = make('createDelay', 4), dr = make('createDelay', 4), a = make('createGain'), b = make('createGain'), m = make('createChannelMerger', 2);
+      this.delays = [dl, dr]; a.gain.value = 0.6; b.gain.value = 0.6;
+      inp.connect(dl); dl.connect(a).connect(dr); dr.connect(b).connect(dl);
+      dl.connect(m, 0, 0); dr.connect(m, 0, 1); m.connect(wet);
+    } else if (t === 'spiral') {
+      // An echo whose delay keeps shrinking, so each repeat rises in pitch (Doppler).
+      const d = this.delay = make('createDelay', 4), fb = make('createGain'), hp = make('createBiquadFilter');
+      fb.gain.value = 0.72; hp.type = 'highpass'; hp.frequency.value = 250;
+      inp.connect(d); d.connect(wet); d.connect(hp).connect(fb).connect(d);
+      this.spiralLfo = lfo('sawtooth', 0, d.delayTime);
+    } else if (t === 'reverb') {
       this.conv = make('createConvolver');
-      this.input.connect(this.conv).connect(this.wet);
-    } else if (this.type === 'flanger') {
-      const d = this.delay = make('createDelay', 0.05), fb = make('createGain'), lfo = this.lfo = make('createOscillator'), depth = make('createGain');
-      d.delayTime.value = 0.005; fb.gain.value = 0.6; depth.gain.value = 0.003;
-      lfo.connect(depth).connect(d.delayTime); lfo.start();
-      this.input.connect(d); d.connect(this.wet); d.connect(fb).connect(d);
+      inp.connect(this.conv).connect(wet);
+    } else if (t === 'flanger') {
+      const d = this.delay = make('createDelay', 0.05), fb = make('createGain');
+      d.delayTime.value = 0.005; fb.gain.value = 0.6;
+      lfo('sine', 0.003, d.delayTime);
+      inp.connect(d); d.connect(wet); d.connect(fb).connect(d);
+    } else if (t === 'phaser') {
+      // Four all-pass stages swept together; summed with the dry track they carve moving notches.
+      let node = inp, sweep = null;
+      for (let k = 0; k < 4; k++) {
+        const ap = make('createBiquadFilter'); ap.type = 'allpass'; ap.frequency.value = 500 + k * 400; ap.Q.value = 0.7;
+        if (!sweep) sweep = lfo('sine', 2400, ap.detune); else sweep.depth.connect(ap.detune);
+        node.connect(ap); node = ap;
+      }
+      node.connect(wet);
+    } else if (t === 'trans') {
+      // Chop the volume on the beat: a square wave opens and closes a gate.
+      const gate = make('createGain');
+      this.gate = gate;
+      this.transLfo = lfo('square', 0.5, gate.gain);
+      inp.connect(gate).connect(wet);
+    } else if (t === 'filter') {
+      // A resonant low-pass sweeping up and down once per period.
+      const f = make('createBiquadFilter'); f.type = 'lowpass'; f.frequency.value = 900; f.Q.value = 6;
+      this.sweep = lfo('sine', 3600, f.detune);
+      inp.connect(f).connect(wet);
+    } else if (t === 'crush') {
+      this.shaper = make('createWaveShaper');
+      inp.connect(this.shaper).connect(wet);
     }
+    this.applyLevel();
     this.retime(true);
+  }
+  applyLevel() {
+    if (!ctx || !this.wet) return;
+    const v = this.level.value, now = ctx.currentTime;
+    // Send effects: LEVEL is the wet level. Insert effects run fully wet; LEVEL is their depth.
+    this.wet.gain.setTargetAtTime(this.kind === 'insert' ? 1 : v, now, 0.02);
+    if (this.type === 'trans' && this.gate) { this.gate.gain.setValueAtTime(1 - v / 2, now); this.transLfo.depth.gain.setValueAtTime(v / 2, now); }
+    if (this.type === 'filter' && this.sweep) this.sweep.depth.gain.setTargetAtTime(600 + v * 3600, now, 0.02);
+    if (this.type === 'crush' && this.shaper) this.shaper.curve = crushCurve(Math.round(12 - v * 9));
+  }
+  // Start beat-synced LFOs on the master deck's next beat.
+  alignLfos() {
+    const d = masterDeck();
+    if (!this.lfos.length || !d || !d.loaded || !d.bpm || d.el.paused) return;
+    const period = this.beats * 60 / this.bpm, beat = 60 / d.liveBpm;
+    const into = (((d.el.currentTime - d.firstBeat) / d.beatSec) % 1 + 1) % 1, wait = (1 - into) * beat;
+    for (const l of this.lfos) {
+      const o = ctx.createOscillator(); o.type = l.osc.type; o.frequency.value = 1 / period;
+      o.connect(l.depth); o.start(ctx.currentTime + wait);
+      try { l.osc.stop(ctx.currentTime + wait); } catch {}
+      this.nodes.push(o); l.osc = o;
+    }
   }
   retime(force) {
     if (!ctx) return;
@@ -197,11 +309,13 @@ class FxUnit {
     if (!force && Math.abs(bpm - this.bpm) < 0.05) return;
     this.bpm = bpm;
     $('.fx-bpm-val', this.root).textContent = bpm.toFixed(1);
-    const t = ctx.currentTime;
-    if ((this.type === 'echo' || this.type === 'delay') && this.delay) this.delay.delayTime.setTargetAtTime(this.seconds, t, 0.05);
-    if (this.type === 'flanger' && this.lfo) this.lfo.frequency.setTargetAtTime(1 / Math.max(0.1, this.beats * 60 / bpm), t, 0.05);
+    const t = ctx.currentTime, sec = this.seconds, period = this.beats * 60 / bpm;
+    if (this.delay && this.type !== 'flanger') this.delay.delayTime.setTargetAtTime(sec, t, 0.05);
+    if (this.delays) this.delays.forEach(d => d.delayTime.setTargetAtTime(sec, t, 0.05));
+    if (this.type === 'spiral' && this.spiralLfo) { this.spiralLfo.osc.frequency.setValueAtTime(1 / (period * 4), t); this.spiralLfo.depth.gain.setValueAtTime(-sec * 0.35, t); }
+    for (const l of this.lfos) if (this.type !== 'spiral') l.osc.frequency.setTargetAtTime(1 / Math.max(0.05, period), t, 0.05);
     if (this.type === 'reverb' && this.conv && force) {
-      const len = clamp(this.beats * 60 / bpm * 2, 0.4, 6), rate = ctx.sampleRate, ir = ctx.createBuffer(2, Math.floor(len * rate), rate);
+      const len = clamp(period * 2, 0.4, 6), rate = ctx.sampleRate, ir = ctx.createBuffer(2, Math.floor(len * rate), rate);
       for (let c = 0; c < 2; c++) {
         const d = ir.getChannelData(c);
         for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3);
@@ -209,17 +323,20 @@ class FxUnit {
       this.conv.buffer = ir;
     }
   }
-  // Sends feed the FX from each assigned source; switching it off lets the tail ring out.
+  // Sends feed the FX from each assigned source; switching it off lets send tails ring out.
   route() {
     if (!ctx) return;
-    const t = ctx.currentTime;
-    for (const src of ['A', 'B', 'M']) {
-      const node = src === 'M' ? mixBus : decks[src].chain?.xf;
-      if (!node) continue;
-      if (!this.sends[src]) { this.sends[src] = ctx.createGain(); node.connect(this.sends[src]); this.sends[src].connect(this.input); }
-      this.sends[src].gain.setTargetAtTime(this.assign[src] ? 1 : 0, t, 0.01);
+    const t = ctx.currentTime, src = fxSources(), audible = this.kind !== 'deck';
+    for (const k of ['A', 'B', 'M']) {
+      if (!src[k]) continue;
+      if (!this.sends[k]) { this.sends[k] = ctx.createGain(); src[k].connect(this.sends[k]); this.sends[k].connect(this.input); }
+      this.sends[k].gain.setTargetAtTime(audible && this.assign[k] ? 1 : 0, t, 0.01);
     }
-    this.input.gain.setTargetAtTime(this.on ? 1 : 0, t, 0.01);
+    // Inserts cut instantly with the dry path; sends fade so their tails stay.
+    this.input.gain.setTargetAtTime(this.on && audible ? 1 : 0, t, this.kind === 'insert' ? 0.005 : 0.01);
+    if (this.kind === 'insert' && !this.on) this.wet.gain.setTargetAtTime(0, t, 0.005);
+    else this.applyLevel();
+    updateDry();
   }
 }
 
@@ -318,6 +435,7 @@ class Player {
   set preservesPitch(b) { this.keylock = b; this.post({ type: 'set', keylock: b }); }
   get preservesPitch() { return this.keylock; }
   set webkitPreservesPitch(b) { this.preservesPitch = b; }
+  motion(kind, seconds) { this.post({ type: 'motion', kind, seconds }); }
   setLoop(loop) { this.post({ type: 'set', loop: loop ? { start: loop.start, end: loop.end } : null }); }
   setGains(gains) { this.post({ type: 'set', gains }); }
   scratch(on, target, playing) {
@@ -356,6 +474,7 @@ const stemUrl = (id, name) => `/api/stem/${id}/${name}?t=${encodeURIComponent(to
 const PAD_COLORS = ['#e8364f', '#f0a030', '#e6d32e', '#3fcf5a', '#2fc0d6', '#2d7ff9', '#9b59f0', '#e85fb4'];
 const PAD_LOOPS = [1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32];
 const PAD_JUMPS = [-1, -4, -16, -32, 1, 4, 16, 32];
+const PAD_ROLLS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
 const LOOP_LENGTHS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 const SECONDS_PER_JOG_TURN = 1.8;
 const decks = {};
@@ -391,11 +510,13 @@ class Deck {
     const high = Object.assign(c.createBiquadFilter(), { type: 'highshelf' }); high.frequency.value = 3500;
     const lpf = Object.assign(c.createBiquadFilter(), { type: 'lowpass' }); lpf.frequency.value = 22000; lpf.Q.value = 1;
     const hpf = Object.assign(c.createBiquadFilter(), { type: 'highpass' }); hpf.frequency.value = 10; hpf.Q.value = 1;
-    const ch = c.createGain(), xf = c.createGain(), meter = c.createAnalyser();
+    const ch = c.createGain(), xf = c.createGain(), dry = c.createGain(), meter = c.createAnalyser();
     meter.fftSize = 1024;
-    src.connect(trim).connect(low).connect(mid).connect(high).connect(lpf).connect(hpf).connect(ch).connect(xf).connect(mixBus);
+    src.connect(trim).connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
+    const cfx = buildColorFx(c, hpf, ch);
+    ch.connect(xf).connect(dry).connect(mixBus);
     ch.connect(meter);
-    this.chain = { trim, low, mid, high, lpf, hpf, ch, xf, meter, buf: new Float32Array(1024) };
+    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, meter, buf: new Float32Array(1024) };
     mixer.apply();
     fx.forEach(u => u.route());
   }
@@ -422,7 +543,7 @@ class Deck {
         if (this.mode === 'hot' && this.hot[i] != null) hold = setTimeout(() => { hold = null; this.hot[i] = null; this.renderPads(); }, 600);
         this.padDown(i);
       });
-      const up = () => { if (hold) { clearTimeout(hold); hold = null; } };
+      const up = () => { if (hold) { clearTimeout(hold); hold = null; } this.padUp(i); };
       p.addEventListener('pointerup', up); p.addEventListener('pointercancel', up); p.addEventListener('pointerleave', up);
       this.ui.padGrid.append(p);
     }
@@ -711,6 +832,7 @@ class Deck {
   // --- pads ---
   padDown(i) {
     if (!this.track) return;
+    if (this.mode === 'roll') return this.rollDown(i);
     if (this.mode === 'loop') {
       if (this.loop && this.loop.beats === PAD_LOOPS[i]) return this.exitLoop();
       return this.beatLoop(PAD_LOOPS[i]);
@@ -727,6 +849,23 @@ class Deck {
     if (this.el.paused) this.cue = this.hot[i];
     this.flashPad(i);
   }
+  // ROLL: while a pad is held, repeat a slice on the beat grid; the track keeps
+  // moving underneath and picks up there on release (rekordbox's slip roll).
+  rollDown(i) {
+    if (!this.bpm) return this.setState('Roll needs a BPM.');
+    const len = PAD_ROLLS[i] * this.beatSec, t = this.el.currentTime;
+    const start = this.quantize ? this.firstBeat + Math.floor((t - this.firstBeat) / len + 1e-6) * len : t;
+    if (!this.roll) this.roll = { pos: t, at: performance.now(), rate: this.el.paused ? 0 : this.rate };
+    this.roll.pad = i;
+    this.loop = { start, end: start + len, beats: PAD_ROLLS[i], roll: true };
+    this.renderPads(); this.renderLoop();
+  }
+  padUp(i) {
+    if (!this.roll || this.roll.pad !== i) return;
+    const r = this.roll; this.roll = null; this.loop = null;
+    this.el.currentTime = r.pos + (performance.now() - r.at) / 1000 * r.rate;
+    this.renderPads(); this.renderLoop();
+  }
   flashPad(i) {
     const p = this.ui.padGrid.children[i];
     p.classList.add('lit'); setTimeout(() => p.classList.remove('lit'), 150);
@@ -737,6 +876,9 @@ class Deck {
       if (this.mode === 'loop') {
         p.innerHTML = `<span>${beatLabel(PAD_LOOPS[i])}</span><small>BEAT</small>`;
         p.classList.toggle('set', !!this.loop && this.loop.beats === PAD_LOOPS[i]);
+      } else if (this.mode === 'roll') {
+        p.innerHTML = `<span>${beatLabel(PAD_ROLLS[i])}</span><small>ROLL</small>`;
+        p.classList.toggle('set', !!this.roll && this.roll.pad === i);
       } else if (this.mode === 'jump') {
         p.innerHTML = `<span>${PAD_JUMPS[i] < 0 ? '◀' : '▶'} ${Math.abs(PAD_JUMPS[i])}</span><small>BEAT</small>`;
         p.classList.remove('set');
@@ -944,6 +1086,34 @@ const waves = {
   },
 };
 
+// ---------- color FX (one knob per channel) ----------
+// FILTER uses the channel's low/high-pass; the others run in parallel paths:
+// DUB ECHO and JET add to the track, NOISE adds a filtered noise riser, CRUSH blends in.
+function buildColorFx(c, from, to) {
+  const g = v => { const n = c.createGain(); n.gain.value = v; return n; };
+  const fx = { dry: g(1) };
+  from.connect(fx.dry).connect(to);
+  // Dub echo: a long dark/bright feedback echo.
+  fx.dubSend = g(0); fx.dubDelay = c.createDelay(2); fx.dubDelay.delayTime.value = 0.375;
+  const dubFb = g(0.62); fx.dubTone = c.createBiquadFilter(); fx.dubTone.Q.value = 0.7;
+  from.connect(fx.dubSend).connect(fx.dubDelay).connect(fx.dubTone).connect(dubFb).connect(fx.dubDelay);
+  fx.dubTone.connect(to);
+  // Noise: looped white noise through a sweepable filter.
+  const nb = c.createBuffer(1, c.sampleRate * 2, c.sampleRate), nd = nb.getChannelData(0);
+  for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+  const ns = c.createBufferSource(); ns.buffer = nb; ns.loop = true; ns.start();
+  fx.noiseFilter = c.createBiquadFilter(); fx.noiseFilter.Q.value = 1.5; fx.noiseGain = g(0);
+  ns.connect(fx.noiseFilter).connect(fx.noiseGain).connect(to);
+  // Crush: quantised copy blended against the dry signal.
+  fx.crushSend = g(0); fx.crush = c.createWaveShaper(); fx.crush.curve = crushCurve(6);
+  from.connect(fx.crushSend).connect(fx.crush).connect(to);
+  // Jet: a slow, deep flanger.
+  fx.jetSend = g(0); const jd = c.createDelay(0.05), jfb = g(0.75), lfo = c.createOscillator(), depth = g(0.0035);
+  jd.delayTime.value = 0.004; lfo.frequency.value = 0.25; lfo.connect(depth).connect(jd.delayTime); lfo.start();
+  from.connect(fx.jetSend).connect(jd).connect(to); jd.connect(jfb).connect(jd);
+  return fx;
+}
+
 // ---------- mixer ----------
 const mixer = {
   channels: {},
@@ -958,6 +1128,7 @@ const mixer = {
     }
     knobs.master = new Knob($('.knob[data-role=master]'), v => { if (master) master.gain.setTargetAtTime(v, ctx.currentTime, 0.01); });
     $('#xfader').addEventListener('input', () => this.apply());
+    $('#cfxType').addEventListener('change', () => this.apply());
     $('#xfader').addEventListener('dblclick', e => { e.target.value = 0; this.apply(); });
   },
   apply() {
@@ -971,9 +1142,19 @@ const mixer = {
       c.low.gain.setTargetAtTime(k.low.value, now, 0.01);
       c.mid.gain.setTargetAtTime(k.mid.value, now, 0.01);
       c.high.gain.setTargetAtTime(k.high.value, now, 0.01);
-      const f = k.cfx.value;
-      c.lpf.frequency.setTargetAtTime(f < -0.02 ? 20000 * Math.pow(10, f * 3) : 22000, now, 0.01);
-      c.hpf.frequency.setTargetAtTime(f > 0.02 ? 20 * Math.pow(10, f * 3) : 10, now, 0.01);
+      const f = k.cfx.value, a = Math.abs(f), type = $('#cfxType').value, x = c.cfx, set = (p, v) => p.setTargetAtTime(v, now, 0.02);
+      const on = t => (type === t && a > 0.02 ? a : 0);
+      set(c.lpf.frequency, type === 'filter' && f < -0.02 ? 20000 * Math.pow(10, f * 3) : 22000);
+      set(c.hpf.frequency, type === 'filter' && f > 0.02 ? 20 * Math.pow(10, f * 3) : 10);
+      // Left of centre darkens the effect, right of centre brightens it.
+      set(x.dubSend.gain, on('dub'));
+      x.dubTone.type = f < 0 ? 'lowpass' : 'highpass'; set(x.dubTone.frequency, f < 0 ? 1800 : 600);
+      if (d.bpm) set(x.dubDelay.delayTime, Math.min(1.9, 0.75 * 60 / d.liveBpm));
+      set(x.noiseGain.gain, on('noise') * 0.25);
+      x.noiseFilter.type = f < 0 ? 'lowpass' : 'highpass'; set(x.noiseFilter.frequency, f < 0 ? 200 + a * 4000 : 8000 - a * 7000);
+      set(x.crushSend.gain, on('crush')); set(x.dry.gain, type === 'crush' ? 1 - a : 1);
+      if (type === 'crush' && Math.round(12 - a * 9) !== x.bits) { x.bits = Math.round(12 - a * 9); x.crush.curve = crushCurve(x.bits); }
+      set(x.jetSend.gain, on('jet') * 0.9);
       c.ch.gain.setTargetAtTime((+ui.fader.value) ** 2, now, 0.01);
       c.xf.gain.setTargetAtTime(xg[L], now, 0.01);
     }

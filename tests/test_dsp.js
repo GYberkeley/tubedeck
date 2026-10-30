@@ -123,3 +123,27 @@ test('reaching the end stops and reports ended', () => {
   assert.strictEqual(dsp.playing, false);
   assert.strictEqual(dsp.state().ended, true);
 });
+
+test('vinyl brake slows to a stop, then release resumes', () => {
+  const dsp = deck([{ name: 'mix', data: tone(440, 10) }], 10);
+  dsp.handle({ type: 'set', playing: true, rate: 1 });
+  render(dsp, 0.5);
+  dsp.handle({ type: 'motion', kind: 'brake', seconds: 1 });
+  render(dsp, 1.2);
+  const stopped = dsp.pos / SR;
+  assert.ok(Math.abs(stopped - 1.0) < 0.02, `brake covers half its time at average half speed: ${stopped}`);
+  render(dsp, 0.5);
+  assert.strictEqual(dsp.pos / SR, stopped);
+  dsp.handle({ type: 'motion', kind: null });
+  render(dsp, 0.5);
+  assert.ok(Math.abs(dsp.pos / SR - stopped - 0.5) < 0.01);
+});
+
+test('backspin runs backwards and winds down', () => {
+  const dsp = deck([{ name: 'mix', data: tone(440, 10) }], 10);
+  dsp.handle({ type: 'seek', pos: 5 });
+  dsp.handle({ type: 'set', playing: true, rate: 1 });
+  dsp.handle({ type: 'motion', kind: 'spin', seconds: 1 });
+  render(dsp, 1.5);
+  assert.ok(dsp.pos / SR < 4 && dsp.pos / SR > 3.5, `spun back to ${dsp.pos / SR}`);
+});

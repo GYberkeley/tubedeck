@@ -281,6 +281,85 @@ class BrowserSmoke(unittest.TestCase):
         pg.wait_for_function("decks.A.el.dsp.stems[0].gain === 0")
         pg.close()
 
+    def test_effects(self):
+        """Every Beat FX type is audible, brake/backspin move the deck, ROLL slips, and each Color FX changes the sound."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0", timeout=30000)
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
+        pg.evaluate("() => { window.probe = ctx.createAnalyser(); probe.fftSize = 4096; master.connect(probe); }")
+        level = """() => new Promise(done => setTimeout(() => {
+            const b = new Float32Array(4096); probe.getFloatTimeDomainData(b);
+            let s = 0; for (const v of b) s += v * v; done(Math.sqrt(s / b.length)); }, 600))"""
+        # Spectral fingerprint of the master output, to tell whether an effect changed the sound.
+        spectrum = """() => new Promise(done => setTimeout(() => {
+            const b = new Float32Array(probe.frequencyBinCount); probe.getFloatFrequencyData(b);
+            done(Array.from(b.slice(0, 400)).map(v => Math.max(-140, v))); }, 700))"""
+        dry = pg.evaluate(spectrum)
+        dry_level = pg.evaluate(level)
+        # 3/4 beat, so echoes land between the fixture's kicks instead of hiding under them.
+        pg.click(".fxunit[data-fx='0'] .arrow[data-step='-1']")
+
+        def changed(spec):
+            return sum(abs(x - y) for x, y in zip(spec, dry)) / len(dry)
+
+        for fx_type in ["echo", "delay", "pingpong", "spiral", "reverb", "trans", "filter", "flanger", "phaser", "crush"]:
+            pg.select_option(".fxunit[data-fx='0'] select", fx_type)
+            pg.click(".fxunit[data-fx='0'] .fx-on")
+            on_level = pg.evaluate(level)
+            self.assertGreater(on_level, 0.01, f"{fx_type}: silent")
+            spec_change, level_change = changed(pg.evaluate(spectrum)), abs(on_level - dry_level) / dry_level
+            self.assertTrue(spec_change > 1.0 or level_change > 0.1,
+                            f"{fx_type}: no audible change (spectrum {spec_change:.2f} dB, level {level_change:.0%})")
+            pg.click(".fxunit[data-fx='0'] .fx-on")
+        pg.wait_for_timeout(300)
+
+        # Vinyl brake winds the deck down to a stop; turning it off resumes.
+        pg.select_option(".fxunit[data-fx='0'] select", "brake")
+        pg.click(".fxunit[data-fx='0'] .fx-on")
+        pg.wait_for_timeout(1200)  # 1 beat at 120 BPM = 0.5 s
+        t1 = pg.evaluate("decks.A.el.currentTime")
+        pg.wait_for_timeout(400)
+        self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), t1, delta=0.02)
+        pg.click(".fxunit[data-fx='0'] .fx-on")
+        pg.wait_for_timeout(500)
+        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t1 + 0.3)
+
+        # Backspin runs the track backwards.
+        pg.select_option(".fxunit[data-fx='0'] select", "spin")
+        t0 = pg.evaluate("decks.A.el.currentTime")
+        pg.click(".fxunit[data-fx='0'] .fx-on")
+        pg.wait_for_timeout(900)
+        self.assertLess(pg.evaluate("decks.A.el.currentTime"), t0)
+        pg.click(".fxunit[data-fx='0'] .fx-on")
+
+        # ROLL: hold a pad to repeat a slice, release to land where the track would be.
+        pg.evaluate("decks.A.el.currentTime = 10")
+        pg.select_option(".deck[data-deck=A] .pad-mode", "roll")
+        pad = pg.locator(".deck[data-deck=A] .pad-grid .pad:nth-child(4)")  # 1/4 beat
+        start = pg.evaluate("decks.A.el.currentTime")
+        pad.dispatch_event("pointerdown")
+        self.assertTrue(pg.evaluate("decks.A.loop && decks.A.loop.roll"))
+        pg.wait_for_timeout(1000)
+        self.assertLess(pg.evaluate("decks.A.el.currentTime"), start + 0.3)  # stuck repeating the slice
+        pad.dispatch_event("pointerup")
+        pg.wait_for_timeout(50)
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+        self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), start + 1.05, delta=0.2)
+
+        # Each Color FX type changes the sound when the CFX knob is turned.
+        for cfx in ["filter", "dub", "noise", "crush", "jet"]:
+            pg.select_option("#cfxType", cfx)
+            pg.evaluate("mixer.channels.A.knobs.cfx.set(0.8)")
+            self.assertGreater(changed(pg.evaluate(spectrum)), 1.0, f"cfx {cfx}: no audible change")
+            pg.evaluate("mixer.channels.A.knobs.cfx.set(0)")
+        self.assertEqual(errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")

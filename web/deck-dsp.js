@@ -20,6 +20,7 @@ class DeckDSP {
     this.playing = false; this.rate = 1; this.keylock = true; this.ended = false;
     this.loop = null;         // {start, end} in frames
     this.scratching = false; this.target = 0; this.vel = 0;
+    this.motion = null;       // vinyl brake / backspin: {kind, v0, dur, t}
     this.W = 1024; this.Hs = 512; this.search = 192;
     this.win = new Float32Array(this.W).map((_, j) => 0.5 - 0.5 * Math.cos(2 * Math.PI * j / this.W));
     this.olaL = new Float32Array(this.W); this.olaR = new Float32Array(this.W);
@@ -51,6 +52,12 @@ class DeckDSP {
       case 'seek':
         this.pos = Math.max(0, Math.min(m.pos * this.sr, this.length)); this.ended = false; this.resetStretch();
         break;
+      case 'motion':
+        // Vinyl brake: slow from the current speed to a stop. Backspin: a fast reverse
+        // spin that winds down. Both hold silent at the end until released.
+        if (m.kind) this.motion = { kind: m.kind, v0: m.kind === 'spin' ? -3.5 : (this.playing ? this.rate : 0), dur: m.seconds * this.sr, t: 0 };
+        else { this.motion = null; this.resetStretch(); }
+        break;
       case 'scratch':
         if (m.on && !this.scratching) { this.vel = 0; this.resetStretch(); }
         this.scratching = m.on;
@@ -66,7 +73,7 @@ class DeckDSP {
 
   // seq echoes the last command handled, so the page can drop reports older than its latest command.
   state() { return { pos: this.pos / this.sr, playing: this.playing && !this.scratching, ended: this.ended, rate: this.effectiveRate(), seq: this.seq || 0 }; }
-  effectiveRate() { return this.scratching ? this.vel : (this.playing ? this.rate : 0); }
+  effectiveRate() { return this.scratching ? this.vel : this.motion ? (this.motionV || 0) : (this.playing ? this.rate : 0); }
   resetStretch() { this.ws = null; this.fifoN = 0; this.olaL.fill(0); this.olaR.fill(0); }
 
   // Sample frame i (fractional ok) mixed across stems, into out[0..1].
@@ -103,6 +110,17 @@ class DeckDSP {
     const tmp = this._tmp || (this._tmp = [0, 0]);
     this.rampGains(n);
     if (!this.length || (!this.playing && !this.scratching)) { L.fill(0); R.fill(0); return; }
+    if (this.motion && !this.scratching) {
+      const mo = this.motion;
+      for (let j = 0; j < n; j++) {
+        const left = Math.max(0, 1 - mo.t / mo.dur), v = mo.v0 * (mo.kind === 'spin' ? left * left : left);
+        mo.t++; this.motionV = v;
+        this.pos = Math.max(0, Math.min(this.length - 1, this.pos + v));
+        if (v === 0) { L[j] = 0; R[j] = 0; continue; }
+        this.frame(this.pos, tmp); L[j] = tmp[0] * Math.min(1, left * 4); R[j] = tmp[1] * Math.min(1, left * 4);
+      }
+      return;
+    }
     if (this.scratching) {
       // Chase the jog target: velocity eases toward closing the gap in ~30 ms.
       const a = 1 - Math.exp(-1 / (0.012 * this.sr));

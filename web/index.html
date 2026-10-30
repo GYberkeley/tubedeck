@@ -43,6 +43,15 @@
       <div class="channel" data-ch="B"></div>
     </div>
     <div class="mixer-bottom">
+      <label class="cfx-type">COLOR FX
+        <select id="cfxType" aria-label="Color FX type">
+          <option value="filter">FILTER</option>
+          <option value="dub">DUB ECHO</option>
+          <option value="noise">NOISE</option>
+          <option value="crush">CRUSH</option>
+          <option value="jet">JET</option>
+        </select>
+      </label>
       <div class="kn"><div class="knob" data-role="master" data-min="0" data-max="1" data-value="0.85" data-default="0.85"></div><span>MASTER</span></div>
     </div>
   </section>
@@ -79,8 +88,16 @@
     <select aria-label="Effect">
       <option value="echo">ECHO</option>
       <option value="delay">DELAY</option>
+      <option value="pingpong">PING PONG</option>
+      <option value="spiral">SPIRAL</option>
       <option value="reverb">REVERB</option>
+      <option value="trans">TRANS</option>
+      <option value="filter">FILTER</option>
       <option value="flanger">FLANGER</option>
+      <option value="phaser">PHASER</option>
+      <option value="crush">BIT CRUSH</option>
+      <option value="brake">VINYL BRAKE</option>
+      <option value="spin">BACK SPIN</option>
     </select>
     <div class="fx-beat"><button class="arrow" data-step="-1" aria-label="Shorter">‹</button><span class="beat-val">1</span><button class="arrow" data-step="1" aria-label="Longer">›</button></div>
   </div>
@@ -119,6 +136,7 @@
         <option value="hot">HOT CUE</option>
         <option value="loop">BEAT LOOP</option>
         <option value="jump">BEAT JUMP</option>
+        <option value="roll">ROLL</option>
       </select>
     </div>
     <div class="loopbox">
