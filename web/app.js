@@ -439,7 +439,9 @@ class Deck {
     }));
     $('.loop-half', r).addEventListener('click', () => this.resizeLoop(0.5));
     $('.loop-double', r).addEventListener('click', () => this.resizeLoop(2));
-    this.ui.au.addEventListener('click', () => (this.loop ? this.exitLoop() : this.beatLoop(this.loopBeats)));
+    const toggleLoop = () => (this.loop ? this.exitLoop() : this.beatLoop(this.loopBeats));
+    this.ui.au.addEventListener('click', toggleLoop);
+    this.ui.loopLen.addEventListener('click', toggleLoop);
     this.ui.ma.addEventListener('click', () => this.manualLoop());
     this.bindJog();
     this.bindOverview();

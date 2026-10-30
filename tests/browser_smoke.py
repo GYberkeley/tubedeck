@@ -142,6 +142,11 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(pg.inner_text(".deck[data-deck=A] .loop-len"), "2")
         pg.click(".deck[data-deck=A] .loop-au")
         self.assertIsNone(pg.evaluate("decks.A.loop"))
+        # Tapping the loop length itself starts and exits the loop, like the DDJ's beat loop button.
+        pg.click(".deck[data-deck=A] .loop-len")
+        self.assertEqual(pg.evaluate("decks.A.loop.beats"), 2)
+        pg.click(".deck[data-deck=A] .loop-len")
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
 
         # Dragging the platter scratches: the track follows the finger.
         box = pg.locator(".deck[data-deck=A] .jog-ring").bounding_box()
