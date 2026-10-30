@@ -501,7 +501,6 @@ class Deck {
     this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = []; this.scratching = false;
     this.stemOn = { vocals: true, other: true, bass: true, drums: true }; this.stemsReady = false;
     this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
-    this.color = letter === 'A' ? '#2d7ff9' : '#e8a13a';
     this.bindUi();
   }
 
@@ -1025,10 +1024,29 @@ class Deck {
   }
 }
 
-// Draw waveform entries [from, to) across x0..x1 in rekordbox's 3-band colours.
+// ---------- themes ----------
+// The skin (colours, glassy panels, an animated nature scene) comes from themes.css;
+// canvas drawing reads the theme's colours from its CSS variables.
+const THEME = {};
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name;
+  store.set('theme', name);
+  const css = getComputedStyle(document.documentElement), v = k => css.getPropertyValue(k).trim();
+  Object.assign(THEME, { low: v('--wave-low'), mid: v('--wave-mid'), high: v('--wave-high'), playhead: v('--playhead'), A: v('--deck-a'), B: v('--deck-b') });
+  for (const d of Object.values(decks)) { d.color = THEME[d.letter]; d.overviewImg = null; }
+  $('#themeSel').value = name;
+}
+let sceneBpm = 0;
+// The scene breathes with the music: --beat follows the master deck's tempo.
+function syncSceneTempo() {
+  const bpm = Math.round((masterDeck()?.liveBpm || 120) * 10) / 10;
+  if (bpm !== sceneBpm) { sceneBpm = bpm; document.documentElement.style.setProperty('--beat', `${(60 / bpm).toFixed(3)}s`); }
+}
+
+// Draw waveform entries [from, to) across x0..x1 in the theme's 3-band colours.
 function drawBands(g, wave, from, to, x0, x1, y0, h) {
   const cols = Math.max(1, Math.round(x1 - x0)), per = (to - from) / cols, mid = y0 + h / 2, half = h / 2 * 0.95;
-  const layers = [['low', '#1f5fe0', 1], ['mid', '#d9822b', 0.8], ['high', '#f2f2f2', 0.55]];
+  const layers = [['low', THEME.low, 1], ['mid', THEME.mid, 0.8], ['high', THEME.high, 0.55]];
   for (const [band, color, scale] of layers) {
     g.fillStyle = color;
     const arr = wave[band];
@@ -1073,7 +1091,7 @@ const waves = {
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const g = cv.getContext('2d'), span = ZOOMS[this.zoom], lane = h / 2;
-    g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+    g.clearRect(0, 0, w, h);  // the theme's --wave-bg shows through
     ['A', 'B'].forEach((L, i) => {
       const d = decks[L], y0 = i * lane, t = d.position;
       const t0 = t - span / 2, pxPerSec = w / span;
@@ -1104,9 +1122,9 @@ const waves = {
         g.beginPath(); g.moveTo(cx - 5 * dpr, y0 + lane); g.lineTo(cx + 5 * dpr, y0 + lane); g.lineTo(cx, y0 + lane - 7 * dpr); g.fill();
       }
       g.fillStyle = d.color; g.font = `bold ${10 * dpr}px -apple-system, sans-serif`; g.fillText(String(d.num), 6 * dpr, y0 + 13 * dpr);
-      if (i === 0) { g.fillStyle = '#1a1a1a'; g.fillRect(0, lane - dpr / 2, w, dpr); }
+      if (i === 0) { g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, lane - dpr / 2, w, dpr); }
     });
-    g.fillStyle = '#e5484d'; g.fillRect(w / 2 - dpr, 0, 2 * dpr, h);
+    g.fillStyle = THEME.playhead; g.fillRect(w / 2 - dpr, 0, 2 * dpr, h);
   },
 };
 
@@ -1377,12 +1395,15 @@ $('#fxToggle').addEventListener('click', e => {
 mixer.init();
 decks.A = new Deck('A');
 decks.B = new Deck('B');
+applyTheme(store.get('theme') || 'classic');
+$('#themeSel').addEventListener('change', e => applyTheme(e.target.value));
 const fx = [new FxUnit(0), new FxUnit(1)];
 waves.init();
 (function frame(now) {
   decks.A.tick(now); decks.B.tick(now);
   waves.draw();
   fx.forEach(u => u.retime());
+  syncSceneTempo();
   requestAnimationFrame(frame);
 })(performance.now());
 const clock = () => { const d = new Date(); $('#clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };

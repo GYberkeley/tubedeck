@@ -414,6 +414,21 @@ class BrowserSmoke(unittest.TestCase):
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
         self.assertEqual(pg.evaluate("localStorage.getItem('tubedeck.token')"), server.TOKEN)
 
+    def test_themes(self):
+        """Each theme applies its colours to the canvases, keeps the layout intact and is remembered."""
+        pg = self.page()
+        for theme in ["forest", "waterfall", "meadow", "classic"]:
+            pg.select_option("#themeSel", theme)
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), theme)
+            colours = pg.evaluate("[THEME.low, THEME.A, decks.A.color]")
+            self.assertTrue(all(colours) and colours[1] == colours[2], f"{theme}: {colours}")
+            self.assertLessEqual(pg.evaluate("document.documentElement.scrollWidth - innerWidth"), 0)
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('.scene.front')).pointerEvents"), "none")
+        pg.select_option("#themeSel", "meadow")
+        pg.reload()
+        self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")
+        pg.evaluate("localStorage.removeItem('tubedeck.theme')")
+
     def test_layout_fits_phone_and_ipad_widths(self):
         for w, h in [(1180, 820), (820, 1180), (390, 844)]:
             pg = self.page(width=w, height=h)

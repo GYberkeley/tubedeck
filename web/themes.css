@@ -1,0 +1,181 @@
+/* Themes: the console keeps rekordbox's layout; the skin and the scene behind it change.
+   Every animation moves only transform/opacity, so it runs on the compositor and never
+   competes with the audio callback. --beat is set from the master deck's BPM. */
+
+:root {
+  --beat: 0.5s;
+  --bar: #050505;
+  --panel-mix: #101010;
+  --pad: #1c1c1c;
+  --line-soft: #222;
+  --wave-bg: #000;
+  --jog-bg: #0b0b0b;
+  --jog-ring: #1d3f73;
+  --groove-a: #161616;
+  --groove-b: #101010;
+  --wave-low: #1f5fe0;
+  --wave-mid: #d9822b;
+  --wave-high: #f2f2f2;
+  --playhead: #e5484d;
+  --panel-blur: none;
+}
+
+.scene { position: fixed; inset: 0; z-index: -1; pointer-events: none; overflow: hidden; display: none; }
+/* A few particles drift over the console itself; they never take taps. */
+.scene.front { z-index: 40; }
+.scene.front .particles i { opacity: .55; }
+[data-theme="meadow"] .scene.front .particles i { opacity: .8; }
+.scene > * { position: absolute; inset: 0; }
+.scene .particles i { position: absolute; display: block; left: calc(var(--x, 50) * 1vw); }
+[data-theme="forest"] .scene, [data-theme="waterfall"] .scene, [data-theme="meadow"] .scene { display: block; }
+
+/* Panels turn glassy so the scene shows through. */
+[data-theme="forest"], [data-theme="waterfall"], [data-theme="meadow"] { --panel-blur: blur(6px) saturate(1.2); }
+[data-theme="forest"] body, [data-theme="waterfall"] body, [data-theme="meadow"] body { background: transparent; }
+
+/* ---------- Forest ---------- */
+[data-theme="forest"] {
+  --bg: #0f2418; --bar: rgba(9, 24, 15, .62); --panel: rgba(14, 34, 22, .52); --panel-mix: rgba(10, 28, 18, .62);
+  --panel-2: rgba(40, 64, 42, .75); --panel-3: rgba(60, 90, 58, .8); --pad: rgba(30, 52, 34, .7); --line: #2f4a33; --line-soft: rgba(80, 120, 80, .25);
+  --text: #eef3e2; --muted: #9db58f; --blue: #7cc46a; --cue: #d9a441;
+  --deck-a: #8fd46f; --deck-b: #e0a24a; --jog-bg: rgba(10, 24, 14, .85); --jog-ring: #4f7f3c;
+  --groove-a: #183020; --groove-b: #10241a; --wave-bg: rgba(6, 18, 10, .38);
+  --wave-low: #3f8f3a; --wave-mid: #d9a441; --wave-high: #f4f0d8; --playhead: #f2c14e;
+}
+[data-theme="forest"] .scene .sky { background: radial-gradient(ellipse at 50% -10%, #3f6b3a 0%, #1d3a24 45%, #0b1a10 100%); }
+[data-theme="forest"] .scene .glow {
+  /* Light shafts through the canopy, swaying slowly. */
+  background: repeating-linear-gradient(105deg, transparent 0 9%, rgba(230, 240, 180, .08) 10% 13%, transparent 14% 22%);
+  inset: -20% -30%; animation: sway calc(var(--beat) * 16) ease-in-out infinite alternate;
+}
+[data-theme="forest"] .scene .far {
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 120'%3E%3Cpath fill='%23081a0e' d='M0 120V80l20-40 18 36 14-50 22 54 16-30 20 34 18-58 24 60 14-28 20 30 22-64 22 66 16-36 20 40 18-52 22 56 14-26 20 30 22-60 24 62 16-34 16 30v42z'/%3E%3C/svg%3E") repeat-x bottom / 520px 180px;
+  opacity: .85;
+}
+[data-theme="forest"] .scene .near {
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='%23051209'%3E%3Cpath d='M0 200C10 120 40 70 90 40 60 90 50 140 60 200z'/%3E%3Cpath d='M30 200C50 140 90 100 140 90 100 120 80 160 80 200z'/%3E%3C/g%3E%3C/svg%3E") no-repeat left bottom / 260px 260px,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cg fill='%23051209'%3E%3Cpath d='M200 200C190 120 160 70 110 40 140 90 150 140 140 200z'/%3E%3Cpath d='M170 200C150 140 110 100 60 90 100 120 120 160 120 200z'/%3E%3C/g%3E%3C/svg%3E") no-repeat right bottom / 260px 260px;
+}
+[data-theme="forest"] .scene .particles i {
+  /* Falling leaves. */
+  top: -6vh; width: 14px; height: 9px; border-radius: 0 80% 0 80%;
+  background: var(--leaf, #6fae4a); opacity: .85;
+  animation: leaf-fall calc(var(--beat) * var(--n, 20)) linear infinite; animation-delay: calc(var(--beat) * var(--d, 0) * -1);
+}
+[data-theme="forest"] .scene .particles i:nth-child(3n) { --leaf: #c99a3e; }
+[data-theme="forest"] .scene .particles i:nth-child(4n) { --leaf: #9c5a2b; width: 11px; height: 7px; }
+@keyframes leaf-fall {
+  0% { transform: translate(0, 0) rotate(0deg); }
+  25% { transform: translate(6vw, 28vh) rotate(160deg); }
+  50% { transform: translate(-2vw, 55vh) rotate(300deg); }
+  75% { transform: translate(7vw, 82vh) rotate(470deg); }
+  100% { transform: translate(1vw, 112vh) rotate(620deg); }
+}
+@keyframes sway { from { transform: translateX(-3%) rotate(-1deg); } to { transform: translateX(3%) rotate(1deg); } }
+
+/* ---------- Waterfall ---------- */
+[data-theme="waterfall"] {
+  --bg: #0b2433; --bar: rgba(6, 22, 32, .6); --panel: rgba(10, 34, 48, .5); --panel-mix: rgba(8, 28, 40, .62);
+  --panel-2: rgba(30, 64, 82, .75); --panel-3: rgba(50, 92, 112, .8); --pad: rgba(22, 50, 66, .7); --line: #285064; --line-soft: rgba(120, 190, 220, .2);
+  --text: #e8f6fb; --muted: #8fb9c9; --blue: #3fc6e0; --cue: #f0b35a;
+  --deck-a: #54d2ea; --deck-b: #f08a6e; --jog-bg: rgba(6, 22, 32, .85); --jog-ring: #2b7f98;
+  --groove-a: #123446; --groove-b: #0c2736; --wave-bg: rgba(4, 16, 24, .32);
+  --wave-low: #1d6fb8; --wave-mid: #3fc6e0; --wave-high: #f2fbff; --playhead: #ffd27a;
+}
+[data-theme="waterfall"] .scene .sky { background: linear-gradient(180deg, #0a1f2c 0%, #12465c 55%, #1b6c7c 100%); }
+[data-theme="waterfall"] .scene .far {
+  /* Cliffs framing the falls. */
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 400' preserveAspectRatio='none'%3E%3Cpath fill='%23071821' d='M0 0h150l-20 60 30 40-40 70 20 60-30 80 10 90H0z'/%3E%3C/svg%3E") no-repeat left top / 30vw 100%,
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 400' preserveAspectRatio='none'%3E%3Cpath fill='%23071821' d='M200 0H50l25 70-30 50 40 60-25 70 35 70-15 80h120z'/%3E%3C/svg%3E") no-repeat right top / 30vw 100%;
+}
+[data-theme="waterfall"] .scene .glow {
+  /* The falls: two sheets of streaks sliding down at different speeds. */
+  left: 34vw; right: 34vw; top: -100%; bottom: 0; height: 200%;
+  background: repeating-linear-gradient(90deg, rgba(220, 245, 255, .0) 0 6px, rgba(220, 245, 255, .22) 7px 9px, rgba(220, 245, 255, .05) 10px 17px),
+              repeating-linear-gradient(180deg, rgba(255, 255, 255, .08) 0 40px, transparent 40px 90px);
+  animation: fall calc(var(--beat) * 4) linear infinite; filter: blur(.5px);
+}
+[data-theme="waterfall"] .scene .near {
+  /* Mist pooling at the base, breathing on the beat. */
+  top: auto; height: 45vh;
+  background: radial-gradient(ellipse at 50% 100%, rgba(230, 250, 255, .5), rgba(200, 235, 245, .12) 45%, transparent 70%);
+  animation: breathe calc(var(--beat) * 4) ease-in-out infinite alternate;
+}
+[data-theme="waterfall"] .scene .particles i {
+  /* Spray drifting up from the plunge pool. */
+  bottom: 4vh; width: 6px; height: 6px; border-radius: 50%; background: rgba(235, 250, 255, .7);
+  left: calc(38vw + var(--x, 0) * 0.24vw);
+  animation: spray calc(var(--beat) * var(--n, 8)) ease-out infinite; animation-delay: calc(var(--beat) * var(--d, 0) * -1);
+}
+[data-theme="waterfall"] .scene.front .particles i { left: calc(var(--x, 50) * 1vw); width: 4px; height: 4px; }
+@keyframes fall { from { transform: translateY(0); } to { transform: translateY(50%); } }
+@keyframes breathe { from { transform: scale(1); opacity: .75; } to { transform: scale(1.08); opacity: 1; } }
+@keyframes spray {
+  0% { transform: translate(0, 0) scale(.6); opacity: 0; }
+  20% { opacity: .9; }
+  100% { transform: translate(calc(var(--dx, 1) * 6vw), -38vh) scale(1.6); opacity: 0; }
+}
+
+/* ---------- Firefly Meadow ---------- */
+[data-theme="meadow"] {
+  --bg: #0d1028; --bar: rgba(10, 12, 32, .6); --panel: rgba(18, 18, 44, .5); --panel-mix: rgba(14, 14, 36, .62);
+  --panel-2: rgba(44, 42, 82, .75); --panel-3: rgba(64, 60, 110, .8); --pad: rgba(34, 32, 70, .7); --line: #34325e; --line-soft: rgba(170, 160, 255, .18);
+  --text: #f1eefc; --muted: #a9a3cf; --blue: #b78cf2; --cue: #f2cf5b;
+  --deck-a: #b9a2ff; --deck-b: #e8f06a; --jog-bg: rgba(10, 10, 30, .85); --jog-ring: #5b4aa0;
+  --groove-a: #1c1a3a; --groove-b: #141230; --wave-bg: rgba(6, 6, 20, .32);
+  --wave-low: #5b4ad8; --wave-mid: #e8c75a; --wave-high: #fbf7e4; --playhead: #e8f06a;
+}
+[data-theme="meadow"] .scene .sky { background: linear-gradient(180deg, #070a1e 0%, #15183c 60%, #2a2350 100%); }
+[data-theme="meadow"] .scene .far {
+  /* Stars, twinkling in two layers. */
+  background:
+    radial-gradient(1.5px 1.5px at 12% 18%, #fff, transparent), radial-gradient(1px 1px at 28% 8%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 45% 22%, #fff, transparent), radial-gradient(1px 1px at 63% 12%, #fff, transparent),
+    radial-gradient(2px 2px at 78% 26%, #fff, transparent), radial-gradient(1px 1px at 90% 9%, #fff, transparent),
+    radial-gradient(1px 1px at 8% 38%, #fff, transparent), radial-gradient(1.5px 1.5px at 55% 40%, #fff, transparent),
+    radial-gradient(1px 1px at 35% 33%, #fff, transparent), radial-gradient(1px 1px at 84% 44%, #fff, transparent);
+  animation: twinkle calc(var(--beat) * 6) ease-in-out infinite alternate;
+}
+[data-theme="meadow"] .scene .glow {
+  background: radial-gradient(1px 1px at 20% 12%, #fff, transparent), radial-gradient(1.5px 1.5px at 70% 18%, #fff, transparent),
+    radial-gradient(1px 1px at 40% 6%, #fff, transparent), radial-gradient(1px 1px at 95% 30%, #fff, transparent);
+  animation: twinkle calc(var(--beat) * 4) ease-in-out infinite alternate-reverse;
+}
+[data-theme="meadow"] .scene .near {
+  /* Grass along the bottom. */
+  top: auto; height: 22vh;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 60' preserveAspectRatio='none'%3E%3Cpath fill='%23050617' d='M0 60V40l4-22 3 20 5-30 3 28 4-18 3 20 6-34 3 32 4-16 4 18 5-28 3 26 4-20 4 22 5-36 3 34 4-14 4 16 5-30 3 28 4-22 3 22 6-32 3 30 4-16 4 18 5-26 3 24 4-20 4 22 5-34 3 32 4-14 4 16 5-28 3 26 4-22 3 24 6-30 3 28 4-18 4 20 5-32 3 30 4-16 4 18 5-26 3 24 4-20 4 22 5-30 3 28V60z'/%3E%3C/svg%3E") repeat-x bottom / 400px 100%;
+}
+[data-theme="meadow"] .scene .particles i {
+  /* Fireflies: drift on a slow loop and pulse on the beat. */
+  width: 7px; height: 7px; border-radius: 50%;
+  left: calc(var(--x, 50) * 1vw); top: calc(45vh + var(--y, 0) * 0.5vh);
+  background: radial-gradient(circle, #fbffb0 0 30%, rgba(232, 240, 106, .6) 45%, transparent 70%);
+  box-shadow: 0 0 12px 4px rgba(232, 240, 106, .35);
+  animation: drift calc(var(--beat) * var(--n, 16)) ease-in-out infinite alternate, blink calc(var(--beat) * 2) ease-in-out infinite;
+  animation-delay: calc(var(--beat) * var(--d, 0) * -1), calc(var(--beat) * var(--d, 0) * -0.5);
+}
+@keyframes twinkle { from { opacity: .45; } to { opacity: 1; } }
+@keyframes drift {
+  0% { transform: translate(0, 0); }
+  33% { transform: translate(5vw, -6vh); }
+  66% { transform: translate(-3vw, -12vh); }
+  100% { transform: translate(4vw, -4vh); }
+}
+@keyframes blink { 0%, 100% { opacity: .25; } 45% { opacity: 1; } }
+
+/* Themed controls that used fixed colours */
+.knob .arc { stroke: var(--blue); }
+.fx-on { border-color: color-mix(in srgb, var(--blue) 55%, transparent); background: color-mix(in srgb, var(--blue) 10%, var(--jog-bg)); color: color-mix(in srgb, var(--blue) 70%, white); }
+.fx-on.on { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 0 12px color-mix(in srgb, var(--blue) 50%, transparent); }
+.search input, dialog input { background: var(--jog-bg); }
+.chfader { accent-color: var(--blue); }
+
+/* Theme picker */
+.theme-pick { appearance: none; -webkit-appearance: none; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 3px; font: inherit; font-size: 11px; font-weight: 800; padding: 3px 8px; letter-spacing: .3px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .scene *, .scene .particles i { animation: none !important; }
+}
