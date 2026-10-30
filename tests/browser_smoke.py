@@ -417,7 +417,7 @@ class BrowserSmoke(unittest.TestCase):
     def test_themes(self):
         """Each theme applies its colours to the canvases, keeps the layout intact and is remembered."""
         pg = self.page()
-        for theme in ["forest", "waterfall", "meadow", "classic"]:
+        for theme in ["forest", "waterfall", "meadow", "ocean", "desert", "snow", "classic"]:
             pg.select_option("#themeSel", theme)
             self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), theme)
             colours = pg.evaluate("[THEME.low, THEME.A, decks.A.color]")
