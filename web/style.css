@@ -254,7 +254,8 @@ dialog input { padding: 8px 10px; border-radius: 4px; border: 1px solid var(--li
   .deck[data-deck=A] { border-right: 0; }
 }
 @media (max-width: 760px) {
-  .brand { display: none; }
+  .brand, .mode-label { display: none; }
+  .topbar { flex-wrap: wrap; height: auto; padding: 4px 10px; row-gap: 4px; }
   .fxunit { flex-wrap: wrap; gap: 8px; }
   .topbar { gap: 8px; }
   .deck-head { grid-template-columns: auto 1fr auto; }
