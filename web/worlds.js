@@ -34,13 +34,13 @@ float stars(vec3 rd, float scale){ vec2 q = vec2(atan(rd.z, rd.x), rd.y) * scale
   float h = hash(id); return step(.93, h) * smoothstep(.09, 0., length(f + (vec2(hash(id + 3.), hash(id + 7.)) - .5) * .6)) * (.6 + .4 * sin(t * 2. + h * 40.)); }
 `;
 
-const WORLD = (funcs, body) => `${WORLD_COMMON}
+const WORLD = (funcs, body, { raw = false } = {}) => `${WORLD_COMMON}
 ${funcs}
 void main(){
   vec2 p = (gl_FragCoord.xy - .5 * res) / res.y;
   vec3 col = vec3(0.);
 ${body}
-  col = tonemap(col);
+  col = ${raw ? 'clamp(col, 0., 1.)' : 'tonemap(col)'};
   col += (hash(gl_FragCoord.xy) - .5) / 160.;
   gl_FragColor = vec4(col, 1.);
 }`;
@@ -159,14 +159,32 @@ float torii(vec3 p, out float black){
   float kasa = sdBox(k, vec3(1.18, .06, .1)) - .01;
   float shim = sdBox(k + vec3(0., .12, 0.), vec3(1.05, .05, .07));
   float gaku = sdBox(p - vec3(0., 1.88, 0.), vec3(.06, .17, .03));
-  vec3 f = p - vec3(0., 0., -.55); vec3 fp = f; fp.x = abs(abs(fp.x) - .85) - .38;   // railing in front
-  float posts = sdCyl(fp.xz, fp.y - .45, .04, .55);
-  float rails = min(sdBox(f - vec3(0., .48, 0.), vec3(1.32, .035, .035)), sdBox(f - vec3(0., .92, 0.), vec3(1.32, .035, .035)));
-  float red = min(min(min(pil, nuki), min(shim, gaku)), min(posts, rails));
+  float red = min(min(pil, nuki), min(shim, gaku));
   black = kasa < red ? 1. : 0.;
   return min(red, kasa);
 }
-float mapH(vec3 q){ float b; return min(torii(q, b), (q.y - land(q.xz)) * .26); }
+// A pirate ship (Lake Ashi really has them) sailing slowly back and forth far out.
+float shipPart;
+float shipLocal(vec3 p){
+  float sx = -7. + 5. * sin(t * .012), dir = cos(t * .012) >= 0. ? 1. : -1.;
+  vec3 q = (p - vec3(sx, .04 * sin(t * .8), 27.)) / .7; q.x *= dir;
+  float bnd = length(q - vec3(0., 1.2, 0.)) - 3.2;
+  if (bnd > .5) { shipPart = 0.; return bnd; }
+  q.y -= .03 * sin(t * .6 + q.x);
+  float taper = 1. - .55 * smoothstep(.6, 1.6, q.x);
+  float hull = sdBox(vec3(q.x, q.y - .28 - .07 * q.x * q.x, q.z / taper), vec3(1.6, .3, .42)) * .7;
+  hull = min(hull, sdBox(q - vec3(-1.15, .7, 0.), vec3(.42, .18, .38)));
+  vec3 m = q; m.x = q.x < -.2 ? q.x + .65 : q.x < .55 ? q.x - .15 : q.x - .9;
+  float mast = sdCyl(m.xz, m.y - 1.45, .035, .95);
+  vec3 sq = m - vec3(0., 1.45, 0.); sq.xz = rot(.9) * sq.xz; sq.y = abs(sq.y - .02) - .35; sq.x -= .06 * (1. - sq.z * sq.z * 4.);
+  float sail = sdBox(sq, vec3(.02, .3, .38));
+  float flag = sdBox(q - vec3(-.65, 2.5, .12), vec3(.01, .1, .16));
+  float d = min(min(hull, mast), min(sail, flag));
+  shipPart = d == sail ? 2. : d == flag ? 3. : d == mast ? 4. : 1.;
+  return d;
+}
+float ship(vec3 p){ return shipLocal(p) * .7; }
+float mapH(vec3 q){ float b; return min(min(torii(q, b), ship(q)), (q.y - land(q.xz)) * .26); }
 ${sdfKit('mapH', 220)}
 vec3 sky(vec3 rd){
   vec3 c = mix(vec3(.84, .9, .94), vec3(.38, .58, .84), smoothstep(0., .5, rd.y));
@@ -181,7 +199,9 @@ vec3 shade(vec3 q, vec3 rd, float d){
   float black; float dt = torii(q, black);
   vec3 n = normal_mapH(q, .002 + .0012 * d);
   vec3 m; float leafy = 0.;
-  if (dt < .02) m = black > .5 ? vec3(.03) : vec3(.62, .07, .01);
+  float ds = ship(q), tol = .02 + .0015 * d;
+  if (ds < tol && ds < dt) { float k = shipPart; m = k > 3.5 ? vec3(.2, .12, .06) : k > 2.5 ? vec3(.02) : k > 1.5 ? vec3(.9, .86, .75) : (q.y > .5 ? vec3(.6, .45, .1) : vec3(.35, .08, .04)); }
+  else if (dt < tol) m = black > .5 ? vec3(.03) : vec3(.62, .07, .01);
   else if (q.y < .03) m = vec3(.1, .09, .07);
   else {
     leafy = 1.;
@@ -418,9 +438,9 @@ vec3 earth(vec3 ro, vec3 rd, float s){
     float core = smoothstep(.06, 0., length(sf)) + .5 * smoothstep(.012, 0., abs(sf.x)) * smoothstep(.3, 0., abs(sf.y)) + .5 * smoothstep(.012, 0., abs(sf.y)) * smoothstep(.3, 0., abs(sf.x));
     col += mix(vec3(.7, .8, 1.), vec3(1., .9, .75), sh) * step(.965, sh) * core * tw * 1.6;
   }
-  for (int i = 0; i < 3; i++) {                           // shooting stars, every few seconds
-    float fi = float(i), clk = t * .18 + fi * .37, slot = floor(clk), ph = fract(clk) * 4.;
-    if (ph < 1.) {
+  for (int i = 0; i < 1; i++) {                           // a rare shooting star, about once every half minute
+    float fi = float(i), clk = t * .033, slot = floor(clk), ph = fract(clk) * 18.;
+    if (ph < 1. && hash(vec2(slot, 7.)) > .25) {
       vec2 a = vec2(hash(vec2(slot, fi)) * 1.6 - .8, .3 + .18 * hash(vec2(slot, fi + 9.)));
       vec2 dir = normalize(vec2(hash(vec2(slot, fi + 4.)) > .5 ? 1. : -1., -.35 - .3 * hash(vec2(slot, fi + 2.))));
       vec2 head = a + dir * ph * .7;
@@ -528,38 +548,48 @@ vec3 shade(vec3 q, vec3 rd, float d){
   col *= .45 + .55 * smoothstep(-.15, .18, p.y);           // quieter behind the decks
 `),
 
-  // Times Square, as a cartoon: flat cel-shaded buildings at dusk with bold outlines,
-  // poster-bright billboards that swap on the beat, yellow cabs rolling both ways, a
-  // crosswalk, and One Times Square at the end with the New Year's ball on top.
+  // Times Square, as a cartoon: standing at the north end of the bowtie looking down at
+  // One Times Square and its ball, giant ads wrapping the flanking blocks (they swap and
+  // bounce on the beat), towers behind, people milling about the plaza, cabs crossing.
+  // Ink outlines and flat, saturated colour (no film tone curve).
   timessquare: WORLD(`
-const vec3 SUN = vec3(-.5, .6, -.62);
-vec3 tone(float x){ return vec3(.55) + .45 * cos(6.28 * (x + vec3(0., .33, .67))); }
-vec3 poster(float h){                                     // a cartoon palette
+const vec3 KEY = vec3(-.45, .65, -.62);
+vec3 poster(float h){
   h = fract(h) * 6.;
-  return h < 1. ? vec3(.95, .2, .25) : h < 2. ? vec3(1., .82, .15) : h < 3. ? vec3(.15, .75, .95) :
-         h < 4. ? vec3(.95, .35, .75) : h < 5. ? vec3(.3, .85, .4) : vec3(.35, .4, 1.);
+  return h < 1. ? vec3(.93, .1, .16) : h < 2. ? vec3(1., .8, .05) : h < 3. ? vec3(.05, .7, .95) :
+         h < 4. ? vec3(.95, .2, .65) : h < 5. ? vec3(.2, .82, .3) : vec3(.3, .32, .98);
 }
-float wallX(float z){ return 7. - .07 * z; }
-float cellH(float id){ return 14. + 14. * hash(vec2(id, 2.)); }
-float facades(vec3 p){
-  float side = sign(p.x), id = floor(p.z / 8.) + side * 31.;
-  return max((wallX(p.z) - abs(p.x)) * .99, p.y - cellH(id));
-}
-float tower(vec3 p){ return min(sdBox(p - vec3(0., 11., 52.), vec3(2.4, 11., 2.2)), sdBox(p - vec3(0., 14., 64.), vec3(10., 14., 3.))); }
-float ball(vec3 p){ return length(p - vec3(0., 23.6, 52.)) - .9; }
-vec3 cabQ(vec3 p){
-  float lane = p.x > 0. ? 2.3 : -2.3, dir = p.x > 0. ? 1. : -1.;
-  float z = mod(p.z - t * 1.4 * dir + (p.x > 0. ? 0. : 6.), 13.) - 6.5;
-  return vec3(p.x - lane, p.y, z);
-}
-float cab(vec3 p){ vec3 q = cabQ(p); return min(sdBox(q - vec3(0., .45, 0.), vec3(.5, .25, 1.)) - .08, sdBox(q - vec3(0., .82, -.1), vec3(.4, .16, .55)) - .06); }
-float mapT(vec3 p){ return min(min(min(facades(p), tower(p)), min(ball(p), cab(p))), p.y); }
-${sdfKit('mapT', 140, 0, false)}
-// March that also remembers how closely the ray grazed a surface, for silhouette ink.
 float graze;
+float fx(float z){ return z < 33. ? 6. + .2 * max(24. - z, 0.) : 10.; }
+float flankH(float id){ return 11. + 9. * hash(vec2(id, 2.)); }
+float flank(vec3 p){
+  float side = sign(p.x), id = floor(p.z / 9.) + side * 31.;
+  return max(max((fx(p.z) - abs(p.x)) * .95, p.y - flankH(id)), -20. - p.z);
+}
+float tower(vec3 p){ return min(sdBox(p - vec3(0., 5.5, 44.), vec3(2.2, 5.5, 2.6)), sdCyl(p.xz - vec2(0., 44.), p.y - 11.9, .08, 1.)); }
+float ball(vec3 p){ return length(p - vec3(0., 13.4, 44.)) - .75; }
+float backdrop(vec3 p){
+  float id = floor(p.x / 6.); vec3 q = p; q.x = mod(p.x, 6.) - 3.;
+  float H = 16. + 18. * hash(vec2(id, 7.));
+  return min(sdBox(q - vec3(0., H * .5, 62. + 6. * hash(vec2(id, 3.))), vec3(2.4, H * .5, 3.)), max(3. - abs(q.x), p.y - 34.) + .5);
+}
+float people(vec3 p){
+  if (p.z < 3. || p.z > 31.) return max(max(3. - p.z, p.z - 31.), p.y - .9) + .2;
+  vec2 id = floor(p.xz / 1.3); vec3 q = p; q.xz = mod(p.xz, 1.3) - .65;
+  float bound = max(.65 - max(abs(q.x), abs(q.z)) + .1, p.y - 1.);
+  if (hash(id) < .55 || abs(p.x) > fx(p.z) - 1.2) return max(bound, .05);
+  q.xz -= (vec2(hash(id + 3.), hash(id + 5.)) - .5) * .5 + vec2(.15 * sin(t * .4 + hash(id) * 20.), 0.);
+  float body = sdCyl(q.xz, q.y - .38, .13, .3) - .03;
+  float head = length(q - vec3(0., .82, 0.)) - .12;
+  return min(min(body, head), max(bound, .05));
+}
+vec3 cabQ(vec3 p){ return vec3(mod(p.x - t * 1.8, 14.) - 7., p.y, p.z - 33.2); }
+float cab(vec3 p){ vec3 q = cabQ(p); return min(sdBox(q - vec3(0., .45, 0.), vec3(1., .25, .5)) - .08, sdBox(q - vec3(-.1, .82, 0.), vec3(.55, .16, .4)) - .06); }
+float mapT(vec3 p){ return min(min(min(flank(p), tower(p)), min(ball(p), backdrop(p))), min(min(people(p), cab(p)), p.y)); }
+${sdfKit('mapT', 160, 0, false)}
 float marchInk(vec3 ro, vec3 rd, float tmax){
   float d = .05; graze = 1.;
-  for (int i = 0; i < 140; i++) {
+  for (int i = 0; i < 160; i++) {
     float h = mapT(ro + rd * d);
     if (h < .0012 * d) return d;
     graze = min(graze, h / d);
@@ -568,87 +598,116 @@ float marchInk(vec3 ro, vec3 rd, float tmax){
   return 1e5;
 }
 float boxEdge(vec3 q, vec3 b, float w){ vec3 e = step(b - abs(q), vec3(w)); return step(1.5, e.x + e.y + e.z); }
-vec3 billboard(vec2 uv, float k, float s){
-  vec3 a = poster(s + floor(t * .5 + .5 * step(.5, s)) * .5 * step(.7, k)), b = poster(s + .5);
+vec3 ad(vec2 uv, float k, float s){
+  vec3 a = poster(s), b = poster(s + .5);
   float pop = pow(1. - beat, 3.);
   vec2 c = uv - .5;
-  if (k < .25) return mix(a, vec3(1.), smoothstep(.31, .29, length(c * vec2(1.6, 1.)) * (1. - .12 * pop))) * mix(1., .0, smoothstep(.22, .2, length(c * vec2(1.6, 1.)))) + b * smoothstep(.2, .18, length(c * vec2(1.6, 1.)));
-  if (k < .5) return mix(a, b, step(.5, fract((uv.x + uv.y * .6) * 3. - t * .4)));
-  if (k < .75) { float bar = step(abs(c.y), .09) * step(.5, fract(uv.x * 6. + t * 1.2)) * step(abs(c.x), .42);
-    return mix(a, vec3(1.), bar) * (.9 + .25 * pop); }
-  float ang = atan(c.y, c.x), r = length(c * vec2(1.5, 1.));
-  float star = step(r, .2 + .07 * sin(ang * 8. + t * 2.) + .04 * pop);
-  return mix(a, b, star);
+  k *= 6.;
+  if (k < 1.) {                                           // soda: red with a white wave ribbon
+    float rib = smoothstep(.05, .03, abs(c.y - .14 * sin(c.x * 7. + t * 1.5)));
+    return mix(vec3(.9, .06, .12), vec3(1.), rib);
+  }
+  if (k < 2.) {                                           // smiley that bounces on the beat
+    vec2 f = c * vec2(1.6, 1.) - vec2(0., .06 * pop);
+    float face = step(length(f), .34);
+    float eyes = step(length(vec2(abs(f.x) - .11, f.y - .08)), .045);
+    float smile = step(abs(length(f + vec2(0., .02)) - .2), .03) * step(f.y, -.04);
+    return mix(a * .35, mix(vec3(1., .85, .1), vec3(.08), max(eyes, smile)), face);
+  }
+  if (k < 3.) {                                           // three candies hopping in turn
+    vec3 col = b * .4;
+    for (int i = 0; i < 3; i++) {
+      float fi = float(i), hop = max(0., sin(t * 6.2832 * .5 + fi * 2.1)) * .12;
+      vec2 o = c * vec2(1.6, 1.) - vec2((fi - 1.) * .42, -.05 + hop);
+      col = mix(col, poster(fi * .17 + .1), step(length(o), .17));
+      col = mix(col, vec3(1.), step(length(o - vec2(-.05, .05)), .04));
+    }
+    return col;
+  }
+  if (k < 4.) {                                           // starburst
+    float ang = atan(c.y, c.x), r = length(c * vec2(1.6, 1.));
+    return mix(a, b, step(r, .22 + .08 * sign(sin(ang * 9. + t)) + .05 * pop));
+  }
+  if (k < 5.) {                                           // headline crawl
+    vec2 g = vec2(uv.x * 14. + t * 2.5, (uv.y - .35) * 8.);
+    float txt = step(0., g.y) * step(g.y, 2.4) * step(.4, hash(floor(g * vec2(1., 2.)) + floor(g.x / 5.))) * step(1., mod(floor(g.x), 5.));
+    return mix(a, vec3(1.), txt);
+  }
+  return mix(a, b, step(.5, fract((uv.x - uv.y * .5) * 4. - t * .5)));            // stripes
 }
 vec3 shade(vec3 q, vec3 rd, float d){
   vec3 n = normal_mapT(q, .002 + .001 * d);
-  float w = .03 + d * .0025;                              // ink line width grows with distance
-  float lam = dot(n, SUN), cel = lam > .4 ? 1. : lam > 0. ? .78 : .6;
-  if (cab(q) < .03) {
-    vec3 cq = cabQ(q);
-    vec3 m = vec3(1., .78, .1);
-    if (cq.y > .7) m = abs(n.y) > .5 ? vec3(1., .78, .1) : vec3(.15, .25, .4);   // windows
-    m = mix(m, vec3(.1), step(abs(cq.y - .5), .05) * step(.5, fract(cq.z * 4.)) * step(.4, abs(n.x)));  // checker stripe
-    m += (q.x > 0. ? vec3(1., .1, .1) : vec3(1.2, 1.2, .9)) * step(.9, abs(n.z)) * step(cq.y, .55) * step(.25, abs(cq.x));
-    float ink = max(boxEdge(cq - vec3(0., .45, 0.), vec3(.58, .33, 1.08), w), boxEdge(cq - vec3(0., .82, -.1), vec3(.46, .22, .61), w));
-    return mix(m * cel, vec3(.05, .04, .08), ink);
-  }
-  if (ball(q) < .03) return vec3(1.2, 1.25, 1.4) + vec3(.3, .5, 1.) * pow(1. - beat, 2.);
-  if (q.y < .015 + .0015 * d) {                          // street: asphalt, lanes, crosswalk, kerbs
-    vec3 m = vec3(.28, .27, .33);
-    m = mix(m, vec3(1., .8, .2), smoothstep(w, 0., abs(abs(q.x) - .12) - .04));
-    m = mix(m, vec3(.95), step(.5, fract(q.x * 1.2)) * step(6., q.z) * step(q.z, 8.5));
-    m = mix(m, vec3(.55, .52, .58), step(wallX(q.z) - 1.6, abs(q.x)));
-    m = mix(m, vec3(.08), smoothstep(w, 0., abs(abs(q.x) - (wallX(q.z) - 1.6))));
+  float w = .03 + d * .0022;
+  float lam = dot(n, KEY), cel = lam > .3 ? 1. : lam > -.2 ? .82 : .66;
+  vec3 INK = vec3(.04, .03, .08);
+  float pop = pow(1. - beat, 3.);
+  if (ball(q) < .03) return mix(vec3(.75, .85, 1.), vec3(1.), pop) * (.8 + .2 * step(.5, fract(atan(q.z - 44., q.x) * 3. + q.y * 4.)));
+  if (q.y < .015 + .0015 * d) {                           // plaza pavers, avenue, crosswalk
+    vec3 m = q.z < 32. ? vec3(.62, .58, .66) : vec3(.3, .29, .36);
+    vec2 g = fract(q.xz * .8);
+    m *= q.z < 32. ? .92 + .08 * step(.08, min(g.x, g.y)) : 1.;
+    m = mix(m, vec3(.95), step(.5, fract(q.x * 1.1)) * step(31.6, q.z) * step(q.z, 32.6));
+    m = mix(m, vec3(1., .8, .1), step(abs(q.z - 34.8), .06) * step(.5, fract(q.x * .3)));
     return m * cel;
   }
-  float tw = tower(q);
-  vec2 uv; float id, H, cols, rows; vec3 base;
-  if (tw < .03) {
-    if (q.z > 58.) return mix(vec3(.3, .25, .45), vec3(.08), boxEdge(q - vec3(0., 14., 64.), vec3(10., 14., 3.), w)) * cel;
-    uv = vec2(abs(n.z) > .5 ? (q.x + 2.4) / 4.8 : (q.z - 49.8) / 4.4, (q.y - 1.) / 20.);
-    id = 777.; H = 22.; cols = 1.; rows = 5.; base = vec3(.85, .82, .78);
-  } else {
-    float side = sign(q.x); id = floor(q.z / 8.) + side * 31.; H = cellH(id);
-    uv = vec2(mod(q.z, 8.) / 8., (q.y - 3.) / (H - 5.));
-    base = poster(hash(vec2(id, 8.)) + .08) * .55 + vec3(.04);
-    cols = 1. + step(.55, hash(vec2(id, 6.))); rows = 1. + floor(hash(vec2(id, 5.)) * 3.);
-    float e = min(mod(q.z, 8.), 8. - mod(q.z, 8.));
-    if (e < w * 1.5 || abs(H - q.y) < w * 1.5) return vec3(.05, .04, .08);           // building outlines
-    if (q.y < 3.) {                                                                   // shops and awnings
-      if (q.y > 2.4) return mix(poster(hash(vec2(id, 3.))), vec3(1.), step(.5, fract(q.z * 2.))) * cel;
-      float win = step(.15, fract(q.z * .5)) * step(.4, q.y) * step(q.y, 2.1);
-      return mix(base * .5 * cel, vec3(1., .9, .6), win * .8);
-    }
+  if (people(q) < .03) {
+    vec2 id = floor(q.xz / 1.3);
+    vec3 m = q.y > .7 ? vec3(.95, .75, .6) * (.6 + .4 * hash(id + 9.)) : poster(hash(id + 4.));
+    return mix(m * cel, INK, step(abs(dot(n, rd)), .35));
   }
-  if (uv.y > 1. || uv.y < 0.) {                                                       // upper storeys: lit windows
-    vec2 g = vec2(mod(q.z, 8.) * 1.2, q.y * .9), f = fract(g);
-    float win = step(.25, f.x) * step(f.x, .75) * step(.2, f.y) * step(f.y, .8);
-    float lit = step(.45, hash(floor(g) + id));
-    vec3 c = mix(base * cel, mix(vec3(.2, .22, .35), vec3(1., .88, .45), lit), win * (1. - aaFade(d, .4)));
-    return c;
+  if (cab(q) < .03) {
+    vec3 cq = cabQ(q), m = cq.y > .7 && abs(n.y) < .5 ? vec3(.15, .25, .45) : vec3(1., .78, .05);
+    m = mix(m, INK, step(abs(cq.y - .5), .04) * step(.5, fract(cq.x * 4.)));
+    float e = max(boxEdge(cq - vec3(0., .45, 0.), vec3(1.08, .33, .58), w), boxEdge(cq - vec3(-.1, .82, 0.), vec3(.61, .22, .46), w));
+    return mix(m * cel, INK, e);
   }
-  vec2 g = uv * vec2(cols, rows), f = fract(g), cell = floor(g);
-  float gap = .06;
-  if (f.x < gap || f.x > 1. - gap || f.y < gap || f.y > 1. - gap) {
-    float rim = step(f.x, gap * .5) + step(1. - gap * .5, f.x) + step(f.y, gap * .5) + step(1. - gap * .5, f.y);
-    return mix(base * cel, vec3(.05, .04, .08), step(.5, rim) * 0. + step(min(min(f.x, 1. - f.x), min(f.y, 1. - f.y)), gap * .45));
+  if (tower(q) < .03) {                                   // One Times Square: stacked screens
+    if (q.y > 11.) return vec3(.85) * cel;
+    if (boxEdge(q - vec3(0., 5.5, 44.), vec3(2.2, 5.5, 2.6), w) > .5) return INK;
+    float u = abs(n.z) > .5 ? (q.x + 2.2) / 4.4 : (q.z - 41.4) / 5.2;
+    float row = floor(q.y / 2.2), v = fract(q.y / 2.2);
+    if (v < .08 || u < .05 || u > .95) return mix(vec3(.25, .22, .35) * cel, INK, step(v, .04));
+    return ad(vec2(u, (v - .08) / .92), hash(vec2(row, 3.)), hash(vec2(row, 5.)));
   }
-  vec2 bu = (f - gap) / (1. - 2. * gap);
-  float s = hash(cell + id * 1.3);
-  return billboard(bu, hash(cell + id * 2.7), s) * .75;
+  if (backdrop(q) < .03) {                                // towers behind, windows lit
+    float id = floor(q.x / 6.);
+    vec3 m = mix(vec3(.18, .2, .42), vec3(.32, .22, .48), hash(vec2(id, 1.)));
+    vec2 g = vec2((abs(n.x) > .5 ? q.z : q.x) * 1.4, q.y * 1.1), f = fract(g);
+    float win = step(.3, f.x) * step(f.x, .7) * step(.25, f.y) * step(f.y, .75) * step(.4, hash(floor(g) + id));
+    return mix(m * cel, vec3(1., .85, .4), win * (1. - aaFade(d, .7)) + .25 * aaFade(d, .7));
+  }
+  // flanking blocks: shop level, then one or two giant ads, windows above
+  float side = sign(q.x), id = floor(q.z / 9.) + side * 31., H = flankH(id), lz = mod(q.z, 9.);
+  vec3 base = mix(vec3(.28, .2, .42), vec3(.45, .2, .3), hash(vec2(id, 8.)));
+  if (min(lz, 9. - lz) < w * 1.4 || H - q.y < w * 1.4 || abs(n.y) > .5) return abs(n.y) > .5 ? base * .7 : INK;
+  if (q.y < 2.6) {
+    if (q.y > 2.1) return mix(poster(hash(vec2(id, 3.))), vec3(1.), step(.5, fract(lz * 1.5))) * cel;
+    return mix(base * .5, vec3(1., .88, .55), step(.15, fract(lz * .5)) * step(.3, q.y) * step(q.y, 1.9) * .85);
+  }
+  float top = H - 2.5, rows = 1. + step(.5, hash(vec2(id, 5.)));
+  if (q.y > top) {
+    vec2 g = vec2(lz * 1.2, q.y * .9), f = fract(g);
+    float win = step(.25, f.x) * step(f.x, .75) * step(.2, f.y) * step(f.y, .8) * step(.4, hash(floor(g) + id));
+    return mix(base * cel, vec3(1., .88, .45), win);
+  }
+  vec2 uv = vec2(lz / 9., (q.y - 2.6) / (top - 2.6)) * vec2(1., rows);
+  vec2 f = fract(uv), cell = floor(uv);
+  float frame = min(min(f.x, 1. - f.x) * 9., min(f.y, 1. - f.y) * (top - 2.6) / rows);
+  if (frame < .35) return mix(vec3(.85, .85, .9) * cel, INK, step(frame, .12));
+  vec2 bu = (f - vec2(.04, .04 * rows)) / (1. - vec2(.08, .08 * rows));
+  return ad(bu, hash(cell + id * 2.7), hash(cell + id * 1.3));
 }`, `
-  vec3 ro = vec3(.4 * sin(t * .01), 2., -2.);
-  vec3 rd = view(p, 1.3);
+  vec3 ro = vec3(.4 * sin(t * .01), 3., -2.);
+  vec3 rd = view(p, 1.05);
   rd.yz = rot(.1) * rd.yz;
-  float d = marchInk(ro, rd, 100.);
-  vec3 sky = mix(vec3(1., .62, .45), vec3(.3, .22, .55), smoothstep(-.05, .45, rd.y));
-  if (d < 100.) col = shade(ro + rd * d, rd, d);
-  else col = sky + vec3(1.) * stars(rd, 120.) * smoothstep(.3, .5, rd.y) * .5;
-  col = mix(col, vec3(.05, .04, .08), step(graze, .004 + .0015 * (1. - step(d, 100.))) * step(100., d));  // silhouette ink
-  col = mix(col, sky * .9, (1. - exp(-min(d, 100.) * .006)) * step(d, 100.));
-  col *= .5 + .5 * smoothstep(-.15, .18, p.y);           // quieter behind the decks
-`),
+  float d = marchInk(ro, rd, 120.);
+  vec3 sky = mix(vec3(.32, .16, .42), vec3(.06, .05, .2), smoothstep(0., .5, rd.y));
+  if (d < 120.) col = shade(ro + rd * d, rd, d);
+  else col = sky + vec3(.9) * stars(rd, 110.) * smoothstep(.2, .5, rd.y) * .6;
+  col = mix(col, vec3(.04, .03, .08), step(graze, .0035) * step(120., d));           // silhouette ink
+  col = mix(col, sky, (1. - exp(-min(d, 120.) * .004)) * step(d, 120.));
+  col *= .55 + .45 * smoothstep(-.15, .18, p.y);          // quieter behind the decks
+`, { raw: true }),
 
   // Aurora: a still lake under the northern lights. Tall curtains ripple across the sky
   // and in the mirror-calm water, over soft snow-capped ridges and shoreline spruce.
