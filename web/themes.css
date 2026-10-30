@@ -69,9 +69,8 @@
 [data-theme="waterfall"] .deck, [data-theme="waterfall"] .mixer { background-image: linear-gradient(180deg, rgba(120, 230, 210, .06), transparent 40%); }
 /* The band is rendered by the water shader (app.js); the CSS layers stand down. */
 .scene .water { display: none; width: 100%; height: 100%; }
-[data-theme="waterfall"] .scene .water { display: block; }
-[data-theme="waterfall"] .scene .sky, [data-theme="waterfall"] .scene .far, [data-theme="waterfall"] .scene .glow,
-[data-theme="waterfall"] .scene .l1, [data-theme="waterfall"] .scene .pool, [data-theme="waterfall"] .scene .mist { display: none; }
+[data-scene="shader"] .scene.vista .water { display: block; }
+[data-scene="shader"] .scene.vista > :not(.water):not(.particles) { display: none; }
 [data-theme="waterfall"] { --wave-halo: rgba(3, 32, 34, .62); }
 [data-theme="waterfall"] .scene .sky { background: linear-gradient(180deg, #0d4a45 0%, #0b3d39 45%, #072a27 100%); }
 [data-theme="waterfall"] .scene .far {
@@ -235,6 +234,56 @@
 }
 [data-theme="snow"] .scene .particles i:nth-child(3n) { width: 3px; height: 3px; }
 @keyframes snowfall { 0% { transform: translate(0, 0); } 50% { transform: translate(calc(var(--dx, 1) * 3cqw), 55cqh); } 100% { transform: translate(calc(var(--dx, 1) * -2cqw), 110cqh); } }
+
+/* ---------- Shader-scene themes (scenes.js renders the band) ---------- */
+[data-theme="space"] {
+  --bg: #05070f; --bar: #080b18; --panel: #0b0f20; --panel-mix: #090c1a; --panel-2: #1a2240; --panel-3: #25305a; --pad: #121a32;
+  --line: #2a3560; --line-soft: #161d36; --text: #eef2ff; --muted: #9aa6d0; --blue: #7aa8ff; --cue: #ffd27a;
+  --deck-a: #8fb8ff; --deck-b: #f2b25c; --jog-bg: #060914; --jog-ring: #3a5ab0; --groove-a: #121a30; --groove-b: #0c1224;
+  --wave-bg: #03050c; --wave-scrim: rgba(0,0,0,.1); --wave-low: #5d8dff; --wave-mid: #c8a0ff; --wave-high: #ffffff; --playhead: #ffd27a; --wave-halo: rgba(0,0,0,.45);
+}
+[data-theme="rainforest"] {
+  --bg: #0a1a10; --bar: #0c2014; --panel: #0f2618; --panel-mix: #0d2215; --panel-2: #1d3f28; --panel-3: #285334; --pad: #16331f;
+  --line: #2c5636; --line-soft: #183a22; --text: #effaea; --muted: #9fc79f; --blue: #5fd37a; --cue: #e9c46a;
+  --deck-a: #6fe08a; --deck-b: #ffb35c; --jog-bg: #081a0e; --jog-ring: #2f8a4a; --groove-a: #12301c; --groove-b: #0c2414;
+  --wave-bg: #2a4a30; --wave-scrim: rgba(2,16,6,.18); --wave-low: #3fbf5a; --wave-mid: #f2c14e; --wave-high: #ffffff; --playhead: #ffd27a; --wave-halo: rgba(4,24,10,.55);
+}
+[data-theme="alps"] {
+  --bg: #0e1a2a; --bar: #101e30; --panel: #13243a; --panel-mix: #112034; --panel-2: #24395a; --panel-3: #304a72; --pad: #1b2e48;
+  --line: #355078; --line-soft: #1d3048; --text: #f2f7ff; --muted: #a8bcd8; --blue: #e8423c; --cue: #ffd27a;
+  --deck-a: #ff5a50; --deck-b: #7ec8ff; --jog-bg: #0b1626; --jog-ring: #c0392b; --groove-a: #1a2a42; --groove-b: #132034;
+  --wave-bg: #6a9cd0; --wave-scrim: rgba(6,14,28,.15); --wave-low: #3b78d8; --wave-mid: #e8423c; --wave-high: #ffffff; --playhead: #ffd27a; --wave-halo: rgba(6,18,36,.6);
+}
+[data-theme="hakone"] {
+  --bg: #170c0c; --bar: #1c0f0e; --panel: #221211; --panel-mix: #1e100f; --panel-2: #3e201c; --panel-3: #542a24; --pad: #2e1815;
+  --line: #5a2c25; --line-soft: #36191a; --text: #fff3ec; --muted: #e0b0a2; --blue: #e2452c; --cue: #f2c14e;
+  --deck-a: #ff5a3c; --deck-b: #7fd0b0; --jog-bg: #140909; --jog-ring: #b8321f; --groove-a: #2a1513; --groove-b: #1e0f0e;
+  --wave-bg: #c9a090; --wave-scrim: rgba(20,8,6,.15); --wave-low: #e2452c; --wave-mid: #f2c14e; --wave-high: #ffffff; --playhead: #ffe08a; --wave-halo: rgba(26,10,8,.58);
+}
+[data-theme="wulong"] {
+  --bg: #141410; --bar: #191912; --panel: #1e1e16; --panel-mix: #1a1a13; --panel-2: #36362a; --panel-3: #4a4a38; --pad: #2a2a20;
+  --line: #55553f; --line-soft: #303026; --text: #f6f4ea; --muted: #c2bea4; --blue: #9ccf6a; --cue: #f0c46a;
+  --deck-a: #a8dc70; --deck-b: #e8a86a; --jog-bg: #11110c; --jog-ring: #7a8a4a; --groove-a: #24241a; --groove-b: #1a1a12;
+  --wave-bg: #b9bcb0; --wave-scrim: rgba(14,14,8,.15); --wave-low: #5aa86a; --wave-mid: #e0b070; --wave-high: #ffffff; --playhead: #ffd27a; --wave-halo: rgba(20,20,12,.6);
+}
+[data-theme="chongqing"] {
+  --bg: #0a0614; --bar: #0e0819; --panel: #120a20; --panel-mix: #0f081b; --panel-2: #2a1640; --panel-3: #3a1f58; --pad: #1e1030;
+  --line: #4a2670; --line-soft: #231338; --text: #fbefff; --muted: #c4a6e0; --blue: #ff3fa8; --cue: #ffd36b;
+  --deck-a: #ff5ab4; --deck-b: #3fe0ff; --jog-bg: #0a0514; --jog-ring: #a02a8a; --groove-a: #1c0e2e; --groove-b: #140a22;
+  --wave-bg: #120a24; --wave-scrim: rgba(4,2,10,.12); --wave-low: #ff3fa8; --wave-mid: #3fe0ff; --wave-high: #ffffff; --playhead: #ffd36b; --wave-halo: rgba(4,2,12,.55);
+}
+[data-theme="timessquare"] {
+  --bg: #0b0812; --bar: #100b18; --panel: #140e1e; --panel-mix: #110c1a; --panel-2: #2c2040; --panel-3: #3c2c56; --pad: #20172e;
+  --line: #4a3668; --line-soft: #261c38; --text: #fff8f0; --muted: #cdb8e0; --blue: #ffcc00; --cue: #ff5a3c;
+  --deck-a: #ffd21f; --deck-b: #ff4fa0; --jog-bg: #0c0814; --jog-ring: #c89a00; --groove-a: #1e1630; --groove-b: #150f22;
+  --wave-bg: #14101e; --wave-scrim: rgba(4,2,10,.15); --wave-low: #ffcc00; --wave-mid: #ff4fa0; --wave-high: #ffffff; --playhead: #7affea; --wave-halo: rgba(4,2,12,.62);
+}
+[data-theme="aurora"] {
+  --bg: #04080c; --bar: #060c12; --panel: #081018; --panel-mix: #070e15; --panel-2: #152634; --panel-3: #1e3446; --pad: #0f1c28;
+  --line: #244056; --line-soft: #12212e; --text: #eefcf6; --muted: #9cc8bc; --blue: #3dffa0; --cue: #c79bff;
+  --deck-a: #4dffb0; --deck-b: #b98cff; --jog-bg: #050a10; --jog-ring: #1fa86a; --groove-a: #0e1c26; --groove-b: #09141c;
+  --wave-bg: #03070e; --wave-scrim: rgba(0,0,0,.08); --wave-low: #2de89a; --wave-mid: #a77bff; --wave-high: #ffffff; --playhead: #c79bff; --wave-halo: rgba(0,0,0,.4);
+}
 
 /* Themed controls that used fixed colours */
 .knob .arc { stroke: var(--blue); }
