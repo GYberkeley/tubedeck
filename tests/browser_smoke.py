@@ -342,24 +342,33 @@ class BrowserSmoke(unittest.TestCase):
             pg.click(".fxunit[data-fx='0'] .fx-on")
         pg.wait_for_timeout(300)
 
-        # Vinyl brake winds the deck down to a stop; turning it off resumes.
+        # Vinyl brake is held: the deck winds down while held, and on release carries on
+        # where the track would be had it kept playing.
+        on = pg.locator(".fxunit[data-fx='0'] .fx-on")
         pg.select_option(".fxunit[data-fx='0'] select", "brake")
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(1200)  # 1 beat at 120 BPM = 0.5 s
+        t0 = pg.evaluate("decks.A.el.currentTime")
+        on.dispatch_event("pointerdown")
+        pg.wait_for_timeout(1200)  # 1 beat at 120 BPM = 0.5 s of braking, then stopped
         t1 = pg.evaluate("decks.A.el.currentTime")
         pg.wait_for_timeout(400)
         self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), t1, delta=0.02)
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(500)
-        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t1 + 0.3)
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(150)  # next engine report
+        held = pg.evaluate("decks.A.el.currentTime") - t0
+        self.assertGreater(held, 1.4, "release continues where the track would have been")
+        self.assertFalse(pg.evaluate("fx[0].on"))
+        pg.wait_for_timeout(300)
+        self.assertFalse(pg.evaluate("decks.A.el.paused"))
 
-        # Backspin runs the track backwards.
+        # Back spin: runs backwards while held, then carries on.
         pg.select_option(".fxunit[data-fx='0'] select", "spin")
         t0 = pg.evaluate("decks.A.el.currentTime")
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(900)
+        on.dispatch_event("pointerdown")
+        pg.wait_for_timeout(700)
         self.assertLess(pg.evaluate("decks.A.el.currentTime"), t0)
-        pg.click(".fxunit[data-fx='0'] .fx-on")
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(150)
+        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t0 + 0.5)
 
         # ROLL: hold a pad to repeat a slice, release to land where the track would be.
         pg.evaluate("decks.A.el.currentTime = 10")

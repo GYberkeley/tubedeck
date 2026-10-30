@@ -69,9 +69,14 @@ class DeckDSP {
         break;
       case 'motion':
         // Vinyl brake: slow from the current speed to a stop. Backspin: a fast reverse
-        // spin that winds down. Both hold silent at the end until released.
-        if (m.kind) this.motion = { kind: m.kind, v0: m.kind === 'spin' ? -3.5 : (this.playing ? this.rate : 0), dur: m.seconds * this.sr, t: 0 };
-        else { this.motion = null; this.resetStretch(); }
+        // spin that winds down. Both hold silent at the end until released. Like
+        // rekordbox's Beat FX, the deck keeps running underneath: on release, playback
+        // continues where the track would be had it never stopped.
+        if (m.kind) this.motion = { kind: m.kind, v0: m.kind === 'spin' ? -3.5 : (this.playing ? this.rate : 0), dur: m.seconds * this.sr, t: 0, start: this.pos };
+        else {
+          if (this.motion && this.playing) this.pos = Math.max(0, Math.min(this.length - 1, this.motion.start + this.motion.t * this.rate));
+          this.motion = null; this.resetStretch();
+        }
         break;
       case 'scratch':
         if (m.on && !this.scratching) { this.vel = 0; this.resetStretch(); }

@@ -135,8 +135,10 @@ test('vinyl brake slows to a stop, then release resumes', () => {
   render(dsp, 0.5);
   assert.strictEqual(dsp.pos / SR, stopped);
   dsp.handle({ type: 'motion', kind: null });
+  // Released after 1.7 s of brake: the track carries on as if it never stopped.
+  assert.ok(Math.abs(dsp.pos / SR - 2.2) < 0.01, `resumed at ${dsp.pos / SR}`);
   render(dsp, 0.5);
-  assert.ok(Math.abs(dsp.pos / SR - stopped - 0.5) < 0.01);
+  assert.ok(Math.abs(dsp.pos / SR - 2.7) < 0.01);
 });
 
 test('backspin runs backwards and winds down', () => {
@@ -146,6 +148,8 @@ test('backspin runs backwards and winds down', () => {
   dsp.handle({ type: 'motion', kind: 'spin', seconds: 1 });
   render(dsp, 1.5);
   assert.ok(dsp.pos / SR < 4 && dsp.pos / SR > 3.5, `spun back to ${dsp.pos / SR}`);
+  dsp.handle({ type: 'motion', kind: null });
+  assert.ok(Math.abs(dsp.pos / SR - 6.5) < 0.01, `resumed at ${dsp.pos / SR}`);
 });
 
 test('mix minus a muted stem: original when nothing is muted, the remainder when muted', () => {

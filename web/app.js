@@ -179,7 +179,15 @@ class FxUnit {
     }));
     this.level = new Knob($('.knob', this.root), () => this.applyLevel());
     this.onBtn = $('.fx-on', this.root);
-    this.onBtn.addEventListener('click', () => this.toggle());
+    // Vinyl brake and back spin are held: press to start, release to carry on playing.
+    this.onBtn.addEventListener('click', () => { if (this.kind !== 'deck') this.toggle(); });
+    this.onBtn.addEventListener('pointerdown', e => {
+      if (this.kind !== 'deck' || this.on) return;
+      try { this.onBtn.setPointerCapture(e.pointerId); } catch {}
+      this.toggle();
+    });
+    const release = () => { if (this.kind === 'deck' && this.on) this.toggle(); };
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => this.onBtn.addEventListener(t, release));
     $('.auto', this.root).addEventListener('click', e => { this.auto = !this.auto; e.target.classList.toggle('on', this.auto); });
     $('.tap', this.root).addEventListener('click', () => {
       const now = performance.now();
