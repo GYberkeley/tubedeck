@@ -179,7 +179,15 @@ class FxUnit {
     }));
     this.level = new Knob($('.knob', this.root), () => this.applyLevel());
     this.onBtn = $('.fx-on', this.root);
-    this.onBtn.addEventListener('click', () => this.toggle());
+    // Vinyl brake and back spin are held: press to start, release to carry on playing.
+    this.onBtn.addEventListener('click', () => { if (this.kind !== 'deck') this.toggle(); });
+    this.onBtn.addEventListener('pointerdown', e => {
+      if (this.kind !== 'deck' || this.on) return;
+      try { this.onBtn.setPointerCapture(e.pointerId); } catch {}
+      this.toggle();
+    });
+    const release = () => { if (this.kind === 'deck' && this.on) this.toggle(); };
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => this.onBtn.addEventListener(t, release));
     $('.auto', this.root).addEventListener('click', e => { this.auto = !this.auto; e.target.classList.toggle('on', this.auto); });
     $('.tap', this.root).addEventListener('click', () => {
       const now = performance.now();
@@ -405,14 +413,21 @@ class Player {
     if (!keepPos) this.st = { pos: 0, playing: false, ended: false, rate: 0, t: ctx.currentTime };
     this.post({ type: 'load', stems, length: frames, offset, keepPos }, stems.map(s => s.data.buffer));
   }
+  addStems(stems) { this.post({ type: 'addStems', stems }, stems.map(s => s.data.buffer)); }
   unload() { this.frames = 0; this._playing = false; this.post({ type: 'load', stems: [], length: 0 }); this.st = { pos: 0, playing: false, ended: false, rate: 0, t: 0 }; }
   get duration() { return this.frames ? this.frames / this.sr : NaN; }
   get readyState() { return this.frames ? 4 : 0; }
   get paused() { return !this._playing; }
   get currentTime() {
     const s = this.st, ahead = s.playing || this.scratching ? Math.max(0, (ctx ? ctx.currentTime : 0) - s.t) * s.rate : 0;
-    return clamp(s.pos + ahead, 0, this.duration || 0);
+    let t = s.pos + ahead;
+    // Between engine reports, wrap the estimate the way the engine wraps the audio.
+    const L = this.loop;
+    if (L && s.pos < L.end && t >= L.end && !this.scratching) t = L.start + ((t - L.start) % (L.end - L.start));
+    return clamp(t, 0, this.duration || 0);
   }
+  // Last position the engine actually reported (no estimate).
+  get reportedTime() { return this.st.pos; }
   set currentTime(v) {
     v = clamp(v, 0, this.duration || 0);
     this.st = { ...this.st, pos: v, t: ctx ? ctx.currentTime : 0, ended: false };
@@ -436,7 +451,7 @@ class Player {
   get preservesPitch() { return this.keylock; }
   set webkitPreservesPitch(b) { this.preservesPitch = b; }
   motion(kind, seconds) { this.post({ type: 'motion', kind, seconds }); }
-  setLoop(loop) { this.post({ type: 'set', loop: loop ? { start: loop.start, end: loop.end } : null }); }
+  setLoop(loop) { this.loop = loop ? { start: loop.start, end: loop.end } : null; this.post({ type: 'set', loop: this.loop }); }
   setGains(gains) { this.post({ type: 'set', gains }); }
   scratch(on, target, playing) {
     this.scratching = on;
@@ -494,7 +509,6 @@ class Deck {
     this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = []; this.scratching = false;
     this.stemOn = { vocals: true, other: true, bass: true, drums: true }; this.stemsReady = false;
     this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
-    this.color = letter === 'A' ? '#2d7ff9' : '#e8a13a';
     this.bindUi();
   }
 
@@ -658,7 +672,7 @@ class Deck {
         if (this.track !== meta) return;
         const { msg, transfer } = analyzer.channels(buf);
         const r = await analyzer.run({ type: 'pcm', ...msg }, transfer);
-        stems.push({ name, data: r.pcm, gain: this.stemOn[name] ? 1 : 0 });
+        stems.push({ name, data: r.pcm });
         refs.push(r.ref);
       }
       if (this.track !== meta) return;
@@ -666,7 +680,9 @@ class Deck {
       for (const r of refs) for (let i = 0; i < sum.length; i++) sum[i] += r[i];
       const { offset } = this.mixRef ? await analyzer.run({ type: 'align', mix: this.mixRef, stems: sum }, []) : { offset: 0 };
       if (this.track !== meta) return;
-      this.el.load(stems, this.el.frames, { offset, keepPos: true });
+      // The original keeps playing; stems sit at 0 and a muted one is subtracted (-1).
+      for (const s of stems) { s.offset = offset; s.gain = this.stemOn[s.name] ? 0 : -1; }
+      this.el.addStems(stems);
       this.stemsReady = true;
       this.renderStems();
     } catch (e) {
@@ -677,7 +693,7 @@ class Deck {
   toggleStem(name) {
     if (!this.stemsReady) return;
     this.stemOn[name] = !this.stemOn[name];
-    this.el.setGains({ [name]: this.stemOn[name] ? 1 : 0 });
+    this.el.setGains({ [name]: this.stemOn[name] ? 0 : -1 });
     this.renderStems();
   }
   renderStems(status, detail) {
@@ -809,7 +825,12 @@ class Deck {
     const i = LOOP_LENGTHS.indexOf(this.loopBeats);
     const next = LOOP_LENGTHS[clamp((i < 0 ? 7 : i) + (f > 1 ? 1 : -1), 0, LOOP_LENGTHS.length - 1)];
     this.loopBeats = next;
-    if (this.loop && this.bpm) this.loop = { ...this.loop, end: this.loop.start + next * this.beatSec, beats: next };
+    if (this.loop && this.bpm) {
+      const start = this.loop.start, len = next * this.beatSec, t = this.el.currentTime;
+      this.loop = { ...this.loop, end: start + len, beats: next };
+      // Shrinking can leave the playhead past the new end; fold it back in, as a DDJ does.
+      if (t >= start + len) this.el.currentTime = start + ((t - start) % len);
+    }
     this.renderLoop(); this.renderPads();
   }
   renderLoop() {
@@ -900,8 +921,11 @@ class Deck {
       return { a: Math.atan2(dy, dx), r: Math.hypot(dx, dy) / (b.width / 2) };
     };
     ring.addEventListener('pointerdown', e => {
+      // A release that never arrived would leave the deck scratching (silent); finish it first.
+      if (active !== null && e.pointerId !== active) end({ pointerId: active });
       if (active !== null || !this.track) return;
-      active = e.pointerId; ring.setPointerCapture(e.pointerId);
+      active = e.pointerId;
+      try { ring.setPointerCapture(e.pointerId); } catch {}  // throws if the pointer is already gone
       const p = polar(e); last = p.a; lastT = performance.now();
       mode = p.r < 0.8 ? 'scratch' : 'bend';
       ring.classList.add(mode === 'scratch' ? 'scratching' : 'bending');
@@ -928,8 +952,12 @@ class Deck {
       this.scratchPos = pos;
       this.el.scratch(true, pos);
     });
-    const end = e => {
+    function end(e) {
       if (e.pointerId !== active) return;
+      deck.finishJog();
+    }
+    this.finishJog = () => {
+      if (active === null) return;
       active = null; ring.classList.remove('scratching', 'bending');
       this.bend = 0;
       if (mode === 'scratch') {
@@ -940,7 +968,10 @@ class Deck {
       this.el.playbackRate = this.rate;
       mode = null;
     };
-    ring.addEventListener('pointerup', end); ring.addEventListener('pointercancel', end);
+    const deck = this;
+    // lostpointercapture also fires when the browser drops the touch without a pointerup.
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => ring.addEventListener(t, end));
+    window.addEventListener('blur', () => this.finishJog());
   }
 
   bindOverview() {
@@ -960,7 +991,7 @@ class Deck {
     const el = this.el, dur = el.duration || 0, t = this.position;
     // The engine wraps loops at the exact sample; a seek far past the end exits the loop.
     if (this.loop !== this.sentLoop) { this.sentLoop = this.loop; el.setLoop(this.loop); }
-    if (this.loop && !this.scratching && t > this.loop.end + 0.3) this.exitLoop();
+    if (this.loop && !this.scratching && el.reportedTime > this.loop.end + 0.3) this.exitLoop();
     if (this.bend && !this.scratching && now - (this.lastJogMove || 0) > 80) { this.bend = 0; el.playbackRate = this.rate; }
     const playing = !el.paused && !this.scratching;
     this.root.classList.toggle('playing', playing);
@@ -1001,11 +1032,104 @@ class Deck {
   }
 }
 
-// Draw waveform entries [from, to) across x0..x1 in rekordbox's 3-band colours.
-function drawBands(g, wave, from, to, x0, x1, y0, h) {
+// ---------- themes ----------
+// The skin (colours, glassy panels, an animated nature scene) comes from themes.css;
+// canvas drawing reads the theme's colours from its CSS variables.
+const THEME = {};
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name;
+  store.set('theme', name);
+  const css = getComputedStyle(document.documentElement), v = k => css.getPropertyValue(k).trim();
+  Object.assign(THEME, { low: v('--wave-low'), mid: v('--wave-mid'), high: v('--wave-high'), playhead: v('--playhead'), A: v('--deck-a'), B: v('--deck-b'), halo: v('--wave-halo') });
+  water.setActive(name === 'waterfall');
+  for (const d of Object.values(decks)) { d.color = THEME[d.letter]; d.overviewImg = null; }
+  $('#themeSel').value = name;
+}
+// Waterfall: the band is rendered by a fragment shader (on the GPU, one draw call per
+// frame): a misty tree line, a wavy lip where teal water curves over, streaming water
+// that whitens as it falls, and churning foam and mist at the base. Flow follows the BPM.
+const water = {
+  gl: null, prog: null, active: false, t: 0, last: 0,
+  setActive(on) { this.active = on; if (on && !this.gl) this.init(); },
+  init() {
+    const cv = $('.scene.vista .water');
+    const gl = cv && cv.getContext('webgl', { alpha: false, antialias: false, powerPreference: 'low-power' });
+    if (!gl) return;
+    const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, 'attribute vec2 a;void main(){gl_Position=vec4(a,0.,1.);}'));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, WATER_SHADER));
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) { console.warn('water shader', gl.getProgramInfoLog(p)); return; }
+    gl.useProgram(p);
+    gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const a = gl.getAttribLocation(p, 'a'); gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, 2, gl.FLOAT, false, 0, 0);
+    Object.assign(this, { gl, prog: p, cv, uRes: gl.getUniformLocation(p, 'res'), uT: gl.getUniformLocation(p, 't') });
+  },
+  draw(now) {
+    if (!this.active || !this.gl) return;
+    const dt = Math.min(0.1, (now - (this.last || now)) / 1000); this.last = now;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!reduce) this.t += dt * (sceneBpm || 120) / 120;
+    const { gl, cv } = this, scale = Math.min(1.25, window.devicePixelRatio || 1);
+    const w = Math.round(cv.clientWidth * scale), h = Math.round(cv.clientHeight * scale);
+    if (!w || !h) return;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
+    gl.uniform2f(this.uRes, w, h); gl.uniform1f(this.uT, this.t);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  },
+};
+const WATER_SHADER = `precision mediump float;
+uniform vec2 res; uniform float t;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f * f * (3. - 2. * f);
+  return mix(mix(hash(i), hash(i + vec2(1., 0.)), f.x), mix(hash(i + vec2(0., 1.)), hash(i + vec2(1., 1.)), f.x), f.y); }
+float fbm(vec2 p){ float v = 0., a = .5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= .5; } return v; }
+void main(){
+  vec2 uv = gl_FragCoord.xy / res; uv.y = 1. - uv.y;
+  float x = uv.x * res.x / res.y;
+  float lip = .2 + .05 * sin(x * .9 + 1.) + .025 * sin(x * 2.7);
+  // misty sky and a soft tree line above the lip
+  vec3 col = mix(vec3(.86, .93, .94), vec3(.7, .82, .84), uv.y / lip);
+  float trees = lip - .03 - .07 * fbm(vec2(x * 3., 2.));
+  col = mix(col, vec3(.32, .45, .43), smoothstep(trees, trees + .015, uv.y) * .65);
+  // the falling sheet: streaks stretched vertically, scrolling down and accelerating
+  float fy = max(uv.y - lip, 0.);
+  float drift = fbm(vec2(x * 1.6, t * .15)) * 1.6;
+  float s1 = fbm(vec2(x * 7., fy * 1.4 - t * 1.4 + drift));
+  float s2 = fbm(vec2(x * 18., fy * 3. - t * 2.6));
+  vec3 deep = vec3(.03, .3, .34), teal = vec3(.1, .58, .62), cyan = vec3(.5, .88, .88), white = vec3(.95, .99, .99);
+  vec3 w = mix(deep, teal, smoothstep(.3, .72, s1));
+  w = mix(w, cyan, smoothstep(.55, .9, s2) * .7);
+  w = mix(w, white, smoothstep(.0, .55, fy) * smoothstep(.42, .78, s1) * .85);
+  w += vec3(.4, .45, .45) * exp(-pow((uv.y - lip) * 30., 2.));   // light on the lip
+  col = mix(col, w, smoothstep(lip - .008, lip + .008, uv.y));
+  // churning foam and spray at the base
+  float b1 = fbm(vec2(x * 3.2 + t * .12, uv.y * 2.6 + t * .8));
+  float b2 = fbm(vec2(x * 8. - t * .25, uv.y * 5. + t * 1.4));
+  float foam = smoothstep(.5, .95, uv.y + (b1 - .5) * .55);
+  col = mix(col, mix(vec3(.72, .88, .88), vec3(1.), b2), foam * .95);
+  // mist drifting across
+  float mist = .12 + .22 * fbm(vec2(x * 1.2 - t * .08, uv.y * 1.8 - t * .15));
+  col = mix(col, vec3(.96, 1., 1.), mist * smoothstep(.1, 1., uv.y) * .6);
+  gl_FragColor = vec4(col, 1.);
+}`;
+
+let sceneBpm = 0;
+// The scene breathes with the music: --beat follows the master deck's tempo.
+function syncSceneTempo() {
+  const bpm = Math.round((masterDeck()?.liveBpm || 120) * 10) / 10;
+  if (bpm !== sceneBpm) { sceneBpm = bpm; document.documentElement.style.setProperty('--beat', `${(60 / bpm).toFixed(3)}s`); }
+}
+
+// Draw waveform entries [from, to) across x0..x1 in the theme's 3-band colours.
+function drawBands(g, wave, from, to, x0, x1, y0, h, halo) {
   const cols = Math.max(1, Math.round(x1 - x0)), per = (to - from) / cols, mid = y0 + h / 2, half = h / 2 * 0.95;
-  const layers = [['low', '#1f5fe0', 1], ['mid', '#d9822b', 0.8], ['high', '#f2f2f2', 0.55]];
-  for (const [band, color, scale] of layers) {
+  const layers = [['low', THEME.low, 1], ['mid', THEME.mid, 0.8], ['high', THEME.high, 0.55]];
+  // Over a bright scene, a dark halo behind the envelope keeps the waveform readable.
+  if (halo) layers.unshift(['low', halo, 1, 3]);
+  for (const [band, color, scale, pad = 0] of layers) {
     g.fillStyle = color;
     const arr = wave[band];
     for (let c = 0; c < cols; c++) {
@@ -1013,7 +1137,7 @@ function drawBands(g, wave, from, to, x0, x1, y0, h) {
       if (b <= 0 || a >= wave.length) continue;
       let v = 0;
       for (let k = Math.max(0, a); k < Math.min(b, wave.length); k++) if (arr[k] > v) v = arr[k];
-      const hh = Math.pow(v, 0.65) * half * scale;  // lift quiet detail, like rekordbox's display curve
+      const hh = Math.pow(v, 0.65) * half * scale + pad;  // lift quiet detail, like rekordbox's display curve
       if (hh > 0.3) g.fillRect(x0 + c, mid - hh, 1, hh * 2);
     }
   }
@@ -1049,7 +1173,7 @@ const waves = {
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
     const g = cv.getContext('2d'), span = ZOOMS[this.zoom], lane = h / 2;
-    g.fillStyle = '#000'; g.fillRect(0, 0, w, h);
+    g.clearRect(0, 0, w, h);  // the theme's --wave-bg shows through
     ['A', 'B'].forEach((L, i) => {
       const d = decks[L], y0 = i * lane, t = d.position;
       const t0 = t - span / 2, pxPerSec = w / span;
@@ -1064,7 +1188,7 @@ const waves = {
         }
       }
       if (d.loop) { g.fillStyle = 'rgba(70,190,80,0.25)'; g.fillRect((d.loop.start - t0) * pxPerSec, y0, (d.loop.end - d.loop.start) * pxPerSec, lane); }
-      if (d.wave) drawBands(g, d.wave, t0 * WAVE_RATE, (t0 + span) * WAVE_RATE, 0, w, y0 + 4 * dpr, lane - 8 * dpr);
+      if (d.wave) drawBands(g, d.wave, t0 * WAVE_RATE, (t0 + span) * WAVE_RATE, 0, w, y0 + 4 * dpr, lane - 8 * dpr, THEME.halo);
       else if (d.track) { g.fillStyle = '#333'; g.font = `${11 * dpr}px -apple-system, sans-serif`; g.fillText(d.ui.state.textContent || 'Loading…', 12 * dpr, y0 + lane / 2); }
       d.hot.forEach((c, k) => {
         if (c == null) return;
@@ -1080,9 +1204,9 @@ const waves = {
         g.beginPath(); g.moveTo(cx - 5 * dpr, y0 + lane); g.lineTo(cx + 5 * dpr, y0 + lane); g.lineTo(cx, y0 + lane - 7 * dpr); g.fill();
       }
       g.fillStyle = d.color; g.font = `bold ${10 * dpr}px -apple-system, sans-serif`; g.fillText(String(d.num), 6 * dpr, y0 + 13 * dpr);
-      if (i === 0) { g.fillStyle = '#1a1a1a'; g.fillRect(0, lane - dpr / 2, w, dpr); }
+      if (i === 0) { g.fillStyle = 'rgba(255,255,255,0.08)'; g.fillRect(0, lane - dpr / 2, w, dpr); }
     });
-    g.fillStyle = '#e5484d'; g.fillRect(w / 2 - dpr, 0, 2 * dpr, h);
+    g.fillStyle = THEME.playhead; g.fillRect(w / 2 - dpr, 0, 2 * dpr, h);
   },
 };
 
@@ -1353,12 +1477,16 @@ $('#fxToggle').addEventListener('click', e => {
 mixer.init();
 decks.A = new Deck('A');
 decks.B = new Deck('B');
+applyTheme(store.get('theme') || 'classic');
+$('#themeSel').addEventListener('change', e => applyTheme(e.target.value));
 const fx = [new FxUnit(0), new FxUnit(1)];
 waves.init();
 (function frame(now) {
   decks.A.tick(now); decks.B.tick(now);
   waves.draw();
   fx.forEach(u => u.retime());
+  syncSceneTempo();
+  water.draw(now);
   requestAnimationFrame(frame);
 })(performance.now());
 const clock = () => { const d = new Date(); $('#clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };

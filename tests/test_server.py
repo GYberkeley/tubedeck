@@ -407,6 +407,10 @@ class HelperTest(unittest.TestCase):
         code, _, body = self.req("/api/stem/stemBad0001/vocals")  # valid, but not separated
         self.assertEqual((code, json.loads(body)["error"]), (404, "stems not ready"))
 
+    def test_separation_defaults_to_cpu(self):
+        # The Mac GPU backend returns wrong stems without failing, so it must not be the default.
+        self.assertEqual(server.StemSeparator().device, "cpu")
+
     def test_mps_failure_retries_on_cpu(self):
         vid = "noMps000001"
         fake_audio(vid)

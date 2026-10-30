@@ -274,11 +274,35 @@ class BrowserSmoke(unittest.TestCase):
         loop = pg.evaluate("decks.A.loop")
         t = pg.evaluate("decks.A.el.currentTime")
         self.assertTrue(loop["start"] - 0.05 <= t <= loop["end"] + 0.05, f"{t} outside {loop}")
+        # Halving a loop down to 1/8 beat keeps looping, even with the playhead late in the loop.
+        self.assertIsNotNone(pg.evaluate("decks.A.loop"), "the 4-beat loop from above is still on")
+        pg.wait_for_function("decks.A.el.currentTime > decks.A.loop.start + 1.4")  # late in the 2 s loop
+        for _ in range(5):  # 4 -> 2 -> 1 -> 1/2 -> 1/4 -> 1/8
+            pg.click(".deck[data-deck=A] .loop-half")
+        self.assertEqual(pg.inner_text(".deck[data-deck=A] .loop-len"), "1/8")
+        pg.wait_for_timeout(1500)
+        loop = pg.evaluate("decks.A.loop")
+        self.assertIsNotNone(loop, "the 1/8 loop should still be running")
+        t = pg.evaluate("decks.A.el.currentTime")
+        self.assertTrue(loop["start"] - 0.01 <= t <= loop["end"] + 0.01, f"{t} outside {loop}")
+        pg.click(".deck[data-deck=A] .loop-len")
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+
+        # A scratch whose release never arrives (the browser drops the touch) still resumes play.
+        box = pg.locator(".deck[data-deck=A] .jog-ring").bounding_box()
+        pg.locator(".deck[data-deck=A] .jog-ring").dispatch_event("pointerdown", {
+            "pointerId": 7, "clientX": box["x"] + box["width"] / 2 + 20, "clientY": box["y"] + box["height"] / 2})
+        self.assertTrue(pg.evaluate("decks.A.scratching"))
+        pg.locator(".deck[data-deck=A] .jog-ring").dispatch_event("lostpointercapture", {"pointerId": 7})
+        self.assertFalse(pg.evaluate("decks.A.scratching"))
+        pg.wait_for_function("!decks.A.el.paused && decks.A.ui.play.classList.contains('lit')")
+
         pg.wait_for_function("decks.A.stemsReady", timeout=30000)
-        self.assertEqual([s["name"] for s in pg.evaluate("decks.A.el.dsp.stems.map(s => ({name: s.name}))")],
-                         ["vocals", "other", "bass", "drums"])
+        # The original mix keeps playing; stems wait at gain 0 and a muted stem is subtracted.
+        self.assertEqual(pg.evaluate("decks.A.el.dsp.stems.map(s => [s.name, s.gain])"),
+                         [["mix", 1], ["vocals", 0], ["other", 0], ["bass", 0], ["drums", 0]])
         pg.click(".deck[data-deck=A] .stem[data-stem=vocals]")
-        pg.wait_for_function("decks.A.el.dsp.stems[0].gain === 0")
+        pg.wait_for_function("decks.A.el.dsp.stems[1].gain === -1")
         pg.close()
 
     def test_effects(self):
@@ -318,24 +342,33 @@ class BrowserSmoke(unittest.TestCase):
             pg.click(".fxunit[data-fx='0'] .fx-on")
         pg.wait_for_timeout(300)
 
-        # Vinyl brake winds the deck down to a stop; turning it off resumes.
+        # Vinyl brake is held: the deck winds down while held, and on release carries on
+        # where the track would be had it kept playing.
+        on = pg.locator(".fxunit[data-fx='0'] .fx-on")
         pg.select_option(".fxunit[data-fx='0'] select", "brake")
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(1200)  # 1 beat at 120 BPM = 0.5 s
+        t0 = pg.evaluate("decks.A.el.currentTime")
+        on.dispatch_event("pointerdown")
+        pg.wait_for_timeout(1200)  # 1 beat at 120 BPM = 0.5 s of braking, then stopped
         t1 = pg.evaluate("decks.A.el.currentTime")
         pg.wait_for_timeout(400)
         self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), t1, delta=0.02)
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(500)
-        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t1 + 0.3)
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(150)  # next engine report
+        held = pg.evaluate("decks.A.el.currentTime") - t0
+        self.assertGreater(held, 1.4, "release continues where the track would have been")
+        self.assertFalse(pg.evaluate("fx[0].on"))
+        pg.wait_for_timeout(300)
+        self.assertFalse(pg.evaluate("decks.A.el.paused"))
 
-        # Backspin runs the track backwards.
+        # Back spin: runs backwards while held, then carries on.
         pg.select_option(".fxunit[data-fx='0'] select", "spin")
         t0 = pg.evaluate("decks.A.el.currentTime")
-        pg.click(".fxunit[data-fx='0'] .fx-on")
-        pg.wait_for_timeout(900)
+        on.dispatch_event("pointerdown")
+        pg.wait_for_timeout(700)
         self.assertLess(pg.evaluate("decks.A.el.currentTime"), t0)
-        pg.click(".fxunit[data-fx='0'] .fx-on")
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(150)
+        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t0 + 0.5)
 
         # ROLL: hold a pad to repeat a slice, release to land where the track would be.
         pg.evaluate("decks.A.el.currentTime = 10")
@@ -389,6 +422,21 @@ class BrowserSmoke(unittest.TestCase):
         pg.press("#tokenInput", "Enter")
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
         self.assertEqual(pg.evaluate("localStorage.getItem('tubedeck.token')"), server.TOKEN)
+
+    def test_themes(self):
+        """Each theme applies its colours to the canvases, keeps the layout intact and is remembered."""
+        pg = self.page()
+        for theme in ["forest", "waterfall", "meadow", "ocean", "desert", "snow", "classic"]:
+            pg.select_option("#themeSel", theme)
+            self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), theme)
+            colours = pg.evaluate("[THEME.low, THEME.A, decks.A.color]")
+            self.assertTrue(all(colours) and colours[1] == colours[2], f"{theme}: {colours}")
+            self.assertLessEqual(pg.evaluate("document.documentElement.scrollWidth - innerWidth"), 0)
+            self.assertEqual(pg.evaluate("getComputedStyle(document.querySelector('.scene.front')).pointerEvents"), "none")
+        pg.select_option("#themeSel", "meadow")
+        pg.reload()
+        self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")
+        pg.evaluate("localStorage.removeItem('tubedeck.theme')")
 
     def test_layout_fits_phone_and_ipad_widths(self):
         for w, h in [(1180, 820), (820, 1180), (390, 844)]:

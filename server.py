@@ -285,7 +285,9 @@ class StemSeparator:
         self.cv = threading.Condition()
         self.queue = deque()
         self.jobs = {}  # id -> {"state", "error"}
-        self.device = "mps" if sys.platform == "darwin" else None
+        # CPU by default: on Apple Silicon, htdemucs on the GPU ("mps") silently returns wrong
+        # stems (about 14 dB quiet and unrelated to the song). TUBEDECK_STEMS_DEVICE overrides.
+        self.device = os.environ.get("TUBEDECK_STEMS_DEVICE", "cpu")
         threading.Thread(target=self._loop, daemon=True).start()
 
     def request(self, video_id):
