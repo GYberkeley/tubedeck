@@ -38,18 +38,18 @@ const SCENES = {
   float trees = lip - .03 - .07 * fbm(vec2(x * 3., 2.));
   col = mix(col, vec3(.32, .45, .43), smoothstep(trees, trees + .015, y) * .65);
   float fy = max(y - lip, 0.);
-  float drift = fbm(vec2(x * 1.6, t * .15)) * 1.6;
-  float s1 = fbm(vec2(x * 7., fy * 1.4 - t * 1.4 + drift));
-  float s2 = fbm(vec2(x * 18., fy * 3. - t * 2.6));
+  float drift = fbm(vec2(x * 1.6, t * .07)) * 1.6;
+  float s1 = fbm(vec2(x * 7., fy * 1.4 - t * .65 + drift));
+  float s2 = fbm(vec2(x * 18., fy * 3. - t * 1.2));
   vec3 w = mix(vec3(.03, .3, .34), vec3(.1, .58, .62), smoothstep(.3, .72, s1));
   w = mix(w, vec3(.5, .88, .88), smoothstep(.55, .9, s2) * .7);
   w = mix(w, vec3(.95, .99, .99), smoothstep(.0, .55, fy) * smoothstep(.42, .78, s1) * .85);
   w += vec3(.4, .45, .45) * exp(-pow((y - lip) * 30., 2.));
   col = mix(col, w, smoothstep(lip - .008, lip + .008, y));
-  float b1 = fbm(vec2(x * 3.2 + t * .12, y * 2.6 + t * .8));
-  float b2 = fbm(vec2(x * 8. - t * .25, y * 5. + t * 1.4));
+  float b1 = fbm(vec2(x * 3.2 + t * .06, y * 2.6 + t * .4));
+  float b2 = fbm(vec2(x * 8. - t * .12, y * 5. + t * .7));
   col = mix(col, mix(vec3(.72, .88, .88), vec3(1.), b2), smoothstep(.5, .95, y + (b1 - .5) * .55) * .95);
-  float mist = .12 + .22 * fbm(vec2(x * 1.2 - t * .08, y * 1.8 - t * .15));
+  float mist = .12 + .22 * fbm(vec2(x * 1.2 - t * .04, y * 1.8 - t * .08));
   col = mix(col, vec3(.96, 1., 1.), mist * smoothstep(.1, 1., y) * .6);
 `),
 
@@ -292,5 +292,83 @@ const SCENES = {
   float mtn = .55 + .12 * abs(sin(x * .55)) - .1 * fbm(vec2(x * 1.4, 3.));
   s = mix(s, vec3(.02, .03, .05) + vec3(.1, .35, .25) * .25 * smoothstep(mtn + .04, mtn, yy), smoothstep(mtn, mtn + .006, yy));   // mountains, rim-lit
   col = y > lake ? s * .55 : s;
+`),
+};
+
+// Full-screen scenes behind the console (below the waveform band).
+const UNDER_SCENES = {
+  // Beneath the falls: caustics, light shafts, a coral reef, kelp, fish and bubbles.
+  waterfall: SCENE_MAIN(`
+  col = mix(vec3(.05, .34, .38), vec3(.01, .07, .11), pow(y, .8));
+  // Caustics: the classic tileable water pattern, strongest near the surface.
+  vec2 cp = vec2(x, y) * 3.2;
+  vec2 ci = cp; float cs = 1.;
+  for (int n = 0; n < 4; n++) {
+    float tt = t * .12 * (1. - 3.5 / float(n + 1));
+    ci = cp + vec2(cos(tt - ci.x) + sin(tt + ci.y), sin(tt - ci.y) + cos(tt + ci.x));
+    cs += 1. / length(vec2(cp.x / (sin(ci.x + tt) / .005), cp.y / (cos(ci.y + tt) / .005)));
+  }
+  cs /= 4.; cs = 1.17 - pow(cs, 1.4);
+  col += vec3(.5, 1., .92) * clamp(pow(abs(cs), 8.), 0., 1.) * .3 * (1. - smoothstep(.0, .6, y));
+  col += vec3(.6, 1., .95) * pow(max(0., sin(x * 2.4 + y * 1.3 + fbm(vec2(x, t * .03)) * 2.)), 18.) * (1. - y) * .16;   // light shafts
+  float reef = .74 + .05 * fbm(vec2(x * 1.6, 2.)) - .02 * sin(x * 1.1);
+  for (int i = 0; i < 12; i++) {                              // kelp
+    float fi = float(i), kx = fract(fi * .618 + .1) * A;
+    float kh = .2 + .22 * hash1(fi * 3.1);
+    float sway = .03 * sin(y * 6. - t * .7 + fi) * clamp((reef - y) / kh, 0., 1.);
+    float strand = smoothstep(.011, .005, abs(x - kx - sway)) * step(reef - kh, y) * step(y, reef + .02);
+    col = mix(col, mix(vec3(.12, .42, .2), vec3(.32, .6, .24), hash1(fi)), strand * .9);
+  }
+  // Corals, one per cell: brain coral, staghorn or sea fan.
+  float cell = floor(x * 2.2 + .3), cx = (fract(x * 2.2 + .3) - .5) / 2.2;
+  float kind = hash1(cell * 1.7), base = reef + .01;
+  vec3 cc = .55 + .45 * cos(6.28 * (hash1(cell) * .55 + vec3(.95, .2, .45)));
+  float cm = 0.; vec3 tex = cc;
+  if (kind < .4) {
+    vec2 q = vec2(cx, y - base); float ang = atan(q.y, q.x);
+    float r = .055 + .035 * hash1(cell * 5.) + .006 * sin(ang * 11.) + .01 * fbm(vec2(x * 15., y * 15.));
+    cm = smoothstep(.003, -.003, length(q * vec2(1., 1.25)) - r) * step(y, base + .01);
+    tex = cc * (.65 + .45 * smoothstep(.3, .7, sin(fbm(vec2(x, y) * 30.) * 22.)));
+  } else if (kind < .75) {
+    for (int k = 0; k < 5; k++) {
+      float fk = float(k), ax = (fk - 2.) * .022 + .01 * sin(fk * 3. + cell);
+      float ah = .06 + .07 * hash1(cell * 3. + fk), lean = (fk - 2.) * .25;
+      float px2 = cx - ax - lean * (base - y);
+      float arm = smoothstep(.009, .004, abs(px2)) * step(base - ah, y) * step(y, base);
+      float tip = smoothstep(.011, .005, length(vec2(px2, y - (base - ah))));
+      cm = max(cm, max(arm, tip));
+    }
+    tex = mix(cc, cc * 1.25 + .1, smoothstep(.0, .1, base - y));
+  } else {
+    vec2 q = vec2(cx, y - (base - .07));
+    float fan = smoothstep(.003, -.003, length(q * vec2(1., 1.1)) - .075) * step(q.y, .02);
+    float lace = max(smoothstep(.5, .9, fract(atan(q.x, -q.y) * 9. + 2.)), smoothstep(.4, .9, fract(length(q) * 70.)));
+    cm = max(fan * (.35 + .5 * lace), smoothstep(.004, .0, abs(cx)) * step(base - .07, y) * step(y, base));
+    tex = mix(cc, vec3(.85, .25, .55), .4);
+  }
+  col = mix(col, tex, clamp(cm, 0., 1.));
+  col = mix(col, mix(vec3(.55, .44, .32), vec3(.28, .22, .18), fbm(vec2(x * 8., y * 8.))), smoothstep(reef + .02, reef + .05, y));   // sand
+  for (int i = 0; i < 10; i++) {                              // fish
+    float fi = float(i), dir = hash1(fi * 7.) > .5 ? 1. : -1., sp = .025 + .03 * hash1(fi * 2.);
+    float fx = mod(hash1(fi) * (A + .4) + dir * t * sp, A + .4) - .2;
+    float fy = .3 + .4 * hash1(fi * 5.) + .02 * sin(t * .5 + fi * 3.);
+    vec2 q = vec2((x - fx) * dir, y - fy);
+    float sz = .028 + .016 * hash1(fi * 9.);
+    float body = smoothstep(1., .85, length(q / vec2(sz, sz * .45)));
+    vec2 tq = q + vec2(sz * 1.05, 0.); float wig = .3 * sin(t * 5. + fi);
+    float tail = step(-sz * .55, tq.x) * step(tq.x, 0.) * step(abs(tq.y + wig * tq.x), -tq.x * .9);
+    float fin = step(abs(q.x), sz * .3) * step(q.y, -sz * .3) * step(-sz * .7 + abs(q.x) * .8, q.y);
+    vec3 fc = .5 + .5 * cos(6.28 * (hash1(fi * 11.) + vec3(.0, .33, .67)));
+    fc = mix(fc, vec3(1.), step(.5, fract(q.x / sz * 2.)) * .35 * step(.5, hash1(fi * 13.)));
+    col = mix(col, fc, max(max(body, tail), fin * .8) * .95);
+    col = mix(col, vec3(0.), smoothstep(sz * .1, sz * .05, length(q - vec2(sz * .55, sz * .08))));
+  }
+  for (int i = 0; i < 8; i++) {                               // bubbles
+    float fi = float(i), bx = hash1(fi * 3.3) * A + .03 * sin(t + fi);
+    float by = 1. - fract(t * (.04 + .03 * hash1(fi)) + hash1(fi * 8.));
+    float r = .006 + .006 * hash1(fi * 4.);
+    col += vec3(.7, 1., 1.) * smoothstep(r, r * .7, abs(length(vec2(x - bx, y - by)) - r * .6)) * .35;
+  }
+  col *= .8 + .2 * (1. - smoothstep(.85, 1., y));
 `),
 };
