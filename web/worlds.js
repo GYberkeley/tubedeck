@@ -75,12 +75,12 @@ float baseH(vec2 x, float r){
   float horn = exp(-pow(length((x - vec2(5., 48.)) * vec2(1., .8)) * .12, 1.6));
   float side = smoothstep(7., 17., abs(x.x - 1.)) * smoothstep(3., 14., x.y);
   float meadow = .35 * fbm(x * .16) + .2 * sin(x.x * .45 + 1.) * sin(x.y * .32);
-  float h = meadow + side * (1. + 2.8 * r) + far * (r * 4.4 + .8) + horn * (4.2 + 1.6 * r);
+  float h = meadow + side * (.7 + 1.6 * r) + far * (r * 2.3 + .5) + horn * (2.2 + .9 * r);
   return h - .6 * smoothstep(1.2, .45, river(x)) * (1. - far);
 }
 float trees(vec2 x, float g){
   vec2 id = floor(x / .6), q = mod(x, .6) - .3 - (vec2(hash(id + 4.), hash(id + 6.)) - .5) * .2;
-  float forest = step(.55, fbm(x * .11 + 3.)) * step(.35, g) * step(g, 3.2) + step(.985, hash(id + 1.)) * step(.15, g) * step(g, 2.5);
+  float forest = step(.55, fbm(x * .11 + 3.)) * step(.35, g) * step(g, 2.) + step(.985, hash(id + 1.)) * step(.15, g) * step(g, 2.5);
   if (forest < .5 || river(x) < 1.5 || x.y < 9.) return 0.;
   float H = .5 + .45 * hash(id + 2.), r = length(q);
   return max(0., H * (1. - r / .27)) * (1. - .18 * fract(r * 13.));
@@ -147,8 +147,8 @@ vec3 shade(vec3 q, vec3 rd, float d){
     vec3 grass = mix(vec3(.12, .42, .05), vec3(.4, .7, .1), smoothstep(.3, .7, fbm(q.xz * .35)));
     grass *= .85 + .3 * noise(q.xz * 2.5);
     grass = mix(grass, vec3(1., .9, .3), step(.93, noise(q.xz * 30.)) * .6 * (1. - aaFade(d, .03)));   // buttercups
-    m = mix(rock, grass, smoothstep(.62, .8, n.y) * smoothstep(4.2, 2.6, hgt));
-    m = mix(m, vec3(.96, .98, 1.), smoothstep(.45, .7, n.y + (hgt - 4.2) * .35 + (dirt - .5) * .5) * smoothstep(3.6, 4.6, hgt));
+    m = mix(rock, grass, smoothstep(.62, .8, n.y) * smoothstep(2.6, 1.6, hgt));
+    m = mix(m, vec3(.96, .98, 1.), smoothstep(.45, .7, n.y + (hgt - 2.5) * .5 + (dirt - .5) * .5) * smoothstep(2.1, 2.8, hgt));
     n = normalize(n + (vec3(noise3(q * 14. + vec3(t * .9, 0., 0.)), .5, noise3(q * 14. - 2.)) - .5) * .25 * smoothstep(.62, .8, n.y));
   }
   float dif = max(dot(n, SUN), 0.);
@@ -355,8 +355,8 @@ vec3 shade(vec3 q, vec3 rd, float d){
   vec3 c = m * lin * ao_mapW(q, n);
   return mix(c, vec3(.74, .82, .88), 1. - exp(-max(d - 10., 0.) * .009));
 }`, `
-  vec3 ro = vec3(cx(0.) + .4 * sin(t * .01), 1.7, 0.);
-  vec3 rd = view(p, 1.35);
+  vec3 ro = vec3(cx(-16.) + .4 * sin(t * .01), 2.4, -16.);
+  vec3 rd = view(p, 1.8);
   rd.xz = rot(-.06) * rd.xz;
   float d = march_mapW(ro, rd, 90.);
   col = d < 90. ? shade(ro + rd * d, rd, d) : sky(rd);

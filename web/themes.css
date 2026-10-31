@@ -366,3 +366,6 @@
   --pad: rgba(26, 52, 34, .95); --panel-2: rgba(32, 62, 40, .95); --panel-3: rgba(44, 80, 54, .95);
 }
 :is([data-theme="chongqing"], [data-theme="timessquare"], [data-theme="rainforest"])[data-style="world"] :is(.cue, .play, .tog:not(.on), .stem, .loop-len, .loop-arrows button, .pad) { background-color: var(--pad); }
+
+/* An empty deck says so in a readable muted white over the scenes. */
+[data-style="world"] .deck:not(.loaded) .deck-title .title, [data-under="on"] .deck:not(.loaded) .deck-title .title { color: rgba(255, 255, 255, .6); }
