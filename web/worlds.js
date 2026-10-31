@@ -290,26 +290,28 @@ vec3 shade(vec3 q, vec3 rd, float d){
   else col = sky(rd);
 `),
 
-  // Wulong: looking up a sunlit gorge at one of the Three Natural Bridges. Layered
-  // limestone cliffs with ochre and grey streaks, foliage masses on every ledge that
-  // move in the wind, and the great arch opening onto light beyond.
+  // Wulong: the view from under Tianlong natural bridge. Its dark rock vault frames the top;
+  // through the opening a sunlit gorge runs away between sheer limestone walls hung with
+  // green, with the Tianfu post station (Tang-style halls, dark upturned roofs) on the
+  // valley floor far below, a pale path winding to it, and swallows in the air.
   wulong: WORLD(`
-const vec3 SUN = vec3(.3, .87, -.39);
-float cx(float z){ return 1.2 * sin(z * .07); }
-float veg(vec3 p){ return smoothstep(.48, .66, fbm(vec2(p.z * .14 + p.x * .1, p.y * .2)) + .25 * smoothstep(9., 12., p.y)); }
-float rock(vec3 p){
-  float x = p.x - cx(p.z);
-  float strata = .45 * noise(vec2(p.z * .2, p.y * 1.1)) + .25 * sin(p.y * 1.7 + 2. * noise(vec2(p.z * .15, 1.))) * noise(vec2(p.z * .3, p.y * .4));
-  float ledges = .22 * smoothstep(-.3, 1., sin(p.y * 2.8 + 2. * noise(vec2(p.z * .2, 3.))));
-  float air = 4.3 + 1. * sin(p.z * .045 + 1.) + 3. * smoothstep(8., -14., p.z) - abs(x) + strata + ledges - .8 * noise(vec2(p.z * .1, p.y * .15));
-  float walls = max(air, p.y - (12. + 3. * fbm(p.xz * .1)));
-  float slab = max(44. - p.z + .5 * noise(p.xy * .4), p.z - 52.);
-  float arch = length(vec2(x / 3.6, (p.y + 1.) / 6.5)) - 1. + .06 * noise(p.xy * 2.);
-  float bridge = max(max(slab, -arch * 3.), p.y - 10.5 - fbm(p.xz * .2) * 1.5);
-  float d = min(walls, bridge);
-  float v = veg(p) * (.35 + .65 * smoothstep(-10., 4., p.z));
-  d -= v * (.45 + .3 * noise3(p * 2.5 + vec3(.15 * sin(t * .9 + p.y), 0., 0.)));      // foliage, swaying
-  return d;
+const vec3 SUN = vec3(-.25, .88, .4);
+const vec3 VC = vec3(.6, 0., 27.);                       // the post station
+float cx(float z){ return 1.4 * sin(z * .06 + .4); }
+float rockN(vec3 p){ return .5 * noise(vec2(p.z * .22 + p.x * .1, p.y * .7)) + .25 * noise(vec2(p.z * .7, p.y * 2.3)) + .12 * noise(vec2(p.z * 2., p.y * 5.)); }
+float veg(vec3 p){ return smoothstep(.45, .62, fbm(vec2(p.z * .16 + p.x * .12, p.y * .22)) + .3 * smoothstep(3.5, .5, p.y)); }
+float cliffs(vec3 p){
+  float x = abs(p.x - cx(p.z));
+  float W = 3.6 + .18 * p.y + 1.6 * smoothstep(12., 45., p.z) + 1.3 * rockN(p) + .5 * sin(p.y * 1.1 + p.z * .2) * noise(vec2(p.z * .2, p.y * .3));
+  float walls = max(W - x, p.y - 30.);
+  // The natural bridge we stand under: a vault from z -20 to about 12, underside near y 8.5.
+  float edge = 12. + 1.5 * noise(vec2(p.x * .3, p.y * .4));
+  float vault = max(max(p.z - edge, -p.z - 20.), 8.6 + .6 * noise(p.xz * .5) + .4 * smoothstep(0., 6., abs(p.x - cx(p.z))) - p.y);
+  // A second bridge far down the gorge.
+  float far = max(max(abs(p.z - 62.) - 3.5, 19. + 2. * noise(p.xz * .3) - p.y), p.y - 27.);
+  float d = min(min(walls, vault), far);
+  float v = veg(p) * step(p.z, 70.);
+  return d - v * (.5 + .35 * noise3(p * 2.2 + vec3(.15 * sin(t * .9 + p.y), 0., 0.)));    // foliage, swaying
 }
 float clumps(vec2 x){
   vec2 i = floor(x), f = fract(x); float h = 0.;
@@ -317,68 +319,103 @@ float clumps(vec2 x){
     vec2 g = vec2(float(k), float(j)), c = i + g, o = vec2(hash(c), hash(c + 7.)) * .7;
     o.x += .04 * sin(t * 1.2 + hash(c + 5.) * 6.);
     vec2 d = g + o - f; float r = .5 + .3 * hash(c + 3.);
-    h = max(h, sqrt(max(r * r - dot(d, d), 0.)) * (.8 + .5 * hash(c + 11.)) * (.85 + .3 * noise(x * 3.1 + c)));
+    h = max(h, sqrt(max(r * r - dot(d, d), 0.)) * (.8 + .5 * hash(c + 11.)));
   }
   return h;
 }
-float ground(vec3 p){
-  float x = abs(p.x - cx(p.z));
-  float bank = smoothstep(.7, 1.6, x);
-  return p.y - (.12 * fbm(p.xz * .5) + bank * (.25 + .75 * clumps(p.xz / .7)));
+float pathD(vec2 x){ return abs(x.x - cx(x.y) - .8 * sin(x.y * .25)); }
+float floorH(vec2 x){
+  float a = abs(x.x - cx(x.y));
+  float court = smoothstep(6.5, 8.5, length((x - VC.xz) * vec2(1., .8)));
+  float h = .2 * fbm(x * .4) + 2.6 * pow(smoothstep(1., 5.5, a), 2.);
+  return h + court * smoothstep(.25, .6, pathD(x)) * .55 * clumps(x / .9);
 }
-float mapW(vec3 p){ return min(rock(p), ground(p)) * .5; }
-${sdfKit('mapW', 200)}
-vec3 sky(vec3 rd){ return mix(vec3(.85, .9, .92), vec3(.5, .68, .86), smoothstep(0., .6, rd.y)) + vec3(1., .95, .8) * pow(max(dot(rd, SUN), 0.), 6.) * .3; }
+float ground(vec3 p){ return p.y - floorH(p.xz); }
+float hipRoof(vec3 r, float w, float dd, float rise){
+  float e = max(abs(r.x) / w, abs(r.z) / dd);
+  return max(abs(r.y - rise * (1. - e) - .25 * pow(e, 8.)) - .07, max(abs(r.x) - w, abs(r.z) - dd)) * .6;
+}
+float hall(vec3 q, float w, float dd, float h, float tiers){
+  float d = min(sdBox(q - vec3(0., h * .5, 0.), vec3(w, h * .5, dd)), hipRoof(q - vec3(0., h, 0.), w + .45, dd + .45, .55 + .1 * w));
+  if (tiers > 1.5) d = min(min(d, sdBox(q - vec3(0., h + .55, 0.), vec3(w * .6, .3, dd * .6))), hipRoof(q - vec3(0., h + .85, 0.), w * .6 + .35, dd * .6 + .35, .5));
+  return d;
+}
+float village(vec3 p){
+  vec3 q = p - VC - vec3(0., floorH(VC.xz), 0.);
+  if (length(q.xz) > 7.) return length(q.xz) - 6.5;
+  float d = hall(q, 1.5, 1., 1.15, 2.);
+  d = min(d, hall(q - vec3(-2.9, 0., -.6), 1., .8, .85, 1.));
+  d = min(d, hall(q - vec3(2.9, 0., -.4), 1., .8, .85, 1.));
+  d = min(d, hall(q - vec3(0., 0., -3.), .9, .35, .75, 1.));
+  d = min(d, hall(q - vec3(-1.6, 0., 3.), 1.1, .8, .95, 1.));
+  d = min(d, hall(q - vec3(1.9, 0., 3.4), 1., .8, .95, 1.));
+  return d;
+}
+float mapW(vec3 p){ return min(min(cliffs(p), ground(p)), village(p)) * .5; }
+${sdfKit('mapW', 220)}
+vec3 sky(vec3 rd){
+  vec3 c = mix(vec3(.82, .88, .92), vec3(.35, .58, .88), smoothstep(0., .5, rd.y));
+  vec2 q = rd.xz / max(rd.y, .05);
+  return mix(c, vec3(1.), smoothstep(.55, .85, fbm(q * .8 + vec2(t * .01, 0.))) * .7);
+}
 vec3 shade(vec3 q, vec3 rd, float d){
   vec3 n = normal_mapW(q, .004 + .001 * d);
-  float g = ground(q), v = veg(q) * (.35 + .65 * smoothstep(-10., 4., q.z));
-  vec3 m;
-  if (g < rock(q) && q.y < 3.) {
-    v = smoothstep(.12, .35, q.y);
-    vec2 st = fract(vec2(q.x * 1.6, q.z * 2.4)) - .5;
-    float slab = smoothstep(.5, .42, max(abs(st.x), abs(st.y)));
-    m = mix(vec3(.42, .4, .36) * (.75 + .25 * slab), vec3(.07, .22, .03) + vec3(.12, .14, .02) * noise(q.xz * 3.), v);
+  float tol = .02 + .0015 * d, cl = cliffs(q), gr = ground(q), vi = village(q);
+  vec3 m; float v = 0.;
+  if (vi < tol * 3. && vi <= min(cl, gr) + .02) {
+    vec3 c = q - VC;
+    if (n.y > .3 || q.y - floorH(VC.xz) > .95) m = vec3(.14, .16, .15) * (.8 + .3 * step(.5, fract((abs(n.x) > abs(n.z) ? c.z : c.x) * 7.)));
+    else {
+      vec2 w = vec2(fract((abs(n.x) > .5 ? c.z : c.x) * 1.6), q.y - floorH(VC.xz));
+      float win = step(.18, w.x) * step(w.x, .82) * step(.25, w.y) * step(w.y, .75);
+      m = mix(vec3(.26, .14, .08), vec3(1.4, .8, .35), mix(win, .3, aaFade(d, .15)));
+    }
+  } else if (gr < cl) {
+    float a = abs(q.x - cx(q.z));
+    m = mix(vec3(.08, .2, .04), vec3(.25, .42, .08), noise(q.xz * 1.3)) * (.75 + .5 * noise(q.xz * 6.));
+    m = mix(m, vec3(.62, .6, .55), smoothstep(.35, .2, pathD(q.xz)) * smoothstep(6.5, 8., length((q.xz - VC.xz) * vec2(1., .8))));   // the path
+    m = mix(m, vec3(.5, .48, .44), smoothstep(7., 6., length((q.xz - VC.xz) * vec2(1., .8))));   // courtyard stone
+    v = smoothstep(.2, .5, q.y) * (1. - smoothstep(.35, .2, pathD(q.xz)));
   } else {
     float x = q.x - cx(q.z);
-    m = mix(vec3(.46, .45, .42), vec3(.66, .63, .57), noise(vec2((q.z + x) * 1.3, q.y * .12)));
-    m = mix(m, vec3(.68, .5, .3), smoothstep(.55, .8, noise(vec2((q.z + x) * 1.6, q.y * .12))) * .8);   // ochre runs
-    m *= .7 + .3 * smoothstep(.15, .5, noise(vec2((q.z - x) * 3., q.y * .2)));                        // grey water streaks
-    m *= .82 + .18 * smoothstep(.0, .08, abs(fract(q.y * .9 + .3 * noise(vec2(q.z * .3, 1.))) - .5));  // bedding lines
-    m *= .85 + .3 * noise3(q * 6.);
-    float vine = smoothstep(.7, .9, noise(vec2((q.z + x) * 4., 0.))) * smoothstep(0., 1.5, fract(q.y * .45 + .2) * 2.2 - noise(vec2((q.z + x) * 9., q.y)) * .8 - .3);
-    v = max(v, vine * .9 * (1. - aaFade(d, .05)));                                                     // vines hanging off ledges
+    m = mix(vec3(.5, .49, .46), vec3(.72, .69, .63), noise(vec2((q.z + x) * 1.3, q.y * .12)));
+    m = mix(m, vec3(.7, .52, .32), smoothstep(.55, .8, noise(vec2((q.z + x) * 1.6, q.y * .1))) * .7);   // ochre runs
+    m *= .65 + .35 * smoothstep(.15, .5, noise(vec2((q.z - x) * 3., q.y * .15)));                    // water streaks
+    m *= .85 + .3 * noise3(q * 5.);
+    v = veg(q) * step(q.z, 70.);
+    float vine = smoothstep(.72, .9, noise(vec2((q.z + x) * 3.5, 0.))) * smoothstep(0., 1.5, fract(q.y * .3) * 2.2 - noise(vec2((q.z + x) * 8., q.y)) * .8 - .3);
+    v = max(v, vine * .9 * (1. - aaFade(d, .05)));
+    if (q.y > 8. && q.z < 13.) m *= .55;                                                              // the vault's underside
   }
-  float leafy = max(v, step(.5, v));
   if (v > .01) {
-    vec3 lc = mix(vec3(.1, .26, .03), vec3(.32, .5, .08), noise3(q * 1.3));
+    vec3 lc = mix(vec3(.08, .24, .03), vec3(.3, .5, .07), noise3(q * 1.3));
     m = mix(m, lc * (.75 + .5 * noise3(q * 6.)), v);
     n = normalize(n + (vec3(noise3(q * 7. + vec3(t * .7, 0., 0.)), noise3(q * 7. + 4.), noise3(q * 7. - vec3(0., t * .5, 0.))) - .5) * .8 * v);
   }
   float dif = max(dot(n, SUN), 0.);
-  float sh = dif > 0. ? shadow_mapW(q + n * .05, SUN, 25.) : 0.;
-  vec3 lin = dif * sh * vec3(2.1, 1.95, 1.65) + (.45 + .55 * n.y) * vec3(.35, .42, .5) + v * pow(max(dot(rd, SUN), 0.), 2.) * vec3(.2, .3, .04);
+  float sh = dif > 0. ? shadow_mapW(q + n * .05, SUN, 30.) : 0.;
+  float under = smoothstep(14., 8., q.z);                  // the shade beneath the bridge
+  vec3 lin = dif * sh * vec3(2.3, 2.15, 1.8) + (.4 + .6 * n.y) * vec3(.32, .4, .48) * (1. - .7 * under);
   vec3 c = m * lin * ao_mapW(q, n);
-  return mix(c, vec3(.74, .82, .88), 1. - exp(-max(d - 14., 0.) * .006));
+  if (vi < tol * 3. && m.r > 1.) c = max(c, m * .8);                                                       // lit windows glow
+  return mix(c, vec3(.78, .84, .88), 1. - exp(-max(d - 18., 0.) * .012));
 }`, `
-  vec3 ro = vec3(cx(-16.) + .4 * sin(t * .01), 2.4, -16.);
-  vec3 rd = view(p, 1.8);
-  rd.xz = rot(-.06) * rd.xz;
-  float d = march_mapW(ro, rd, 90.);
-  col = d < 90. ? shade(ro + rd * d, rd, d) : sky(rd);
-  // soft sunbeams falling into the gorge
-  float beams = 0.;
-  for (int i = 1; i <= 5; i++) {
-    float s = float(i) * min(d, 60.) / 6.;
-    vec3 q = ro + rd * s;
-    beams += smoothstep(.55, .8, noise(vec2(q.x * .4 - q.y * .25, q.z * .1))) * smoothstep(3., 12., q.y + 4.);
+  vec3 ro = vec3(cx(-2.) + .4 * sin(t * .01), 7.6, -2.);
+  vec3 rd = normalize(vec3(p.x, p.y - .53, 1.4));
+  rd.xz = rot(.04) * rd.xz;
+  float d = march_mapW(ro, rd, 110.);
+  col = d < 110. ? shade(ro + rd * d, rd, d) : sky(rd);
+  float beams = 0.;                                       // light shafts through the opening
+  for (int i = 1; i <= 6; i++) {
+    vec3 q = ro + rd * (float(i) * min(d, 50.) / 7.);
+    beams += smoothstep(.55, .85, noise(vec2(q.x * .35 - q.y * .2, q.z * .08))) * step(12., q.z);
   }
-  col += vec3(1., .95, .8) * beams * .025;
-  for (int i = 0; i < 6; i++) {                           // swallows wheeling in the gorge
+  col += vec3(1., .96, .85) * beams * .03;
+  for (int i = 0; i < 6; i++) {                           // swallows
     float fi = float(i);
-    vec2 c = vec2(.35 * sin(t * (.11 + .03 * fi) + fi * 2.1), .27 + .06 * sin(t * (.17 + .02 * fi) + fi));
-    vec2 b = (p - c) * 260.; float flap = sin(t * 10. + fi * 1.7) * .7;
-    float bird = smoothstep(.2, 0., max(abs(b.y - abs(b.x) * flap) - .3 + .12 * abs(b.x), abs(b.x) - 2.4));
-    col = mix(col, vec3(.15, .16, .17), bird);
+    vec2 c = vec2(.4 * sin(t * (.11 + .03 * fi) + fi * 2.1), .3 + .05 * sin(t * (.17 + .02 * fi) + fi));
+    vec2 b = (p - c) * 240.; float flap = sin(t * 10. + fi * 1.7) * .7;
+    col = mix(col, vec3(.1, .11, .12), smoothstep(.2, 0., max(abs(b.y - abs(b.x) * flap) - .3 + .12 * abs(b.x), abs(b.x) - 2.4)));
   }
 `),
 
