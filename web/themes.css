@@ -300,6 +300,42 @@
 [data-theme="waterfall"][data-under="on"] .tog:not(.on), [data-theme="waterfall"][data-under="on"] .stem { background-color: rgba(10, 52, 52, .88); }
 [data-theme="waterfall"][data-under="on"] .deck-head, [data-theme="waterfall"][data-under="on"] .stem-row { background: rgba(4, 30, 32, .5); }
 
+/* ---------- 3D world themes: the scene fills the screen; the waveform band is clear glass
+   over the skyline and the panels are smoked glass cards (no blur, so the scene stays crisp). */
+[data-style="world"] {
+  --panel: rgba(8, 10, 16, .44); --panel-mix: rgba(8, 10, 16, .52); --bar: rgba(6, 7, 12, .72);
+  --pad: rgba(255, 255, 255, .07); --panel-2: rgba(255, 255, 255, .09); --panel-3: rgba(255, 255, 255, .15);
+  --line: rgba(255, 255, 255, .16); --line-soft: rgba(255, 255, 255, .11);
+  --jog-bg: rgba(0, 0, 0, .35); --groove-a: rgba(255, 255, 255, .05); --groove-b: rgba(0, 0, 0, .14);
+  --text: #ffffff; --muted: rgba(255, 255, 255, .7);
+  --wave-bg: linear-gradient(rgba(0, 0, 0, .08), rgba(0, 0, 0, .28)); --wave-halo: rgba(0, 0, 0, .55);
+}
+[data-style="world"] .deck, [data-style="world"] .mixer, [data-style="world"] .fxbar, [data-style="world"] .browser { background-image: none; }
+[data-style="world"] .browser { background: rgba(6, 7, 12, .72); }
+[data-style="world"] .console { gap: 8px; padding: 8px; }
+[data-style="world"] .deck, [data-style="world"] .mixer {
+  border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+[data-style="world"] .fxbar { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .waves { margin: 8px 8px 0; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .browser { margin: 0 8px 8px; border: 1px solid var(--line-soft); border-radius: 16px; overflow: hidden; }
+[data-style="world"] .xfader-row { background: transparent; border: 0; }
+[data-style="world"] .topbar { background: var(--bar); border-bottom: 1px solid var(--line-soft); }
+[data-style="world"] .tog, [data-style="world"] .pad, [data-style="world"] .loop-len, [data-style="world"] .loop-arrows button,
+[data-style="world"] .fx-type select, [data-style="world"] .pad-mode, [data-style="world"] .theme-pick, [data-style="world"] .search input, [data-style="world"] .search button {
+  border-radius: 9px; border-color: var(--line-soft);
+}
+[data-style="world"] .tog.on { background: linear-gradient(135deg, var(--deck-a), var(--blue)); border-color: transparent; color: #0b0b12; }
+[data-style="world"] .deck[data-deck=B] .tog.on { background: linear-gradient(135deg, var(--deck-b), var(--blue)); }
+[data-style="world"] .fx-on.on { background: linear-gradient(135deg, var(--deck-a), var(--deck-b)); border-color: transparent; color: #0b0b12; }
+[data-style="world"] .jog-ring { border-color: rgba(255, 255, 255, .22); box-shadow: 0 0 0 1px rgba(255, 255, 255, .06), 0 0 30px color-mix(in srgb, var(--c) 25%, transparent); }
+[data-style="world"] .deck-head, [data-style="world"] .stem-row { background: transparent; }
+[data-style="world"] .overview { background: rgba(0, 0, 0, .25); border-color: transparent; }
+[data-style="world"] .waves .zoom { background: transparent; border-right-color: var(--line-soft); }
+[data-style="world"] .scene.front { display: none; }
+
+
 /* Themed controls that used fixed colours */
 .knob .arc { stroke: var(--blue); }
 .fx-on { border-color: color-mix(in srgb, var(--blue) 55%, transparent); background: color-mix(in srgb, var(--blue) 10%, var(--jog-bg)); color: color-mix(in srgb, var(--blue) 70%, white); }
@@ -313,3 +349,23 @@
 @media (prefers-reduced-motion: reduce) {
   .scene *, .scene .particles i, .scene *::before { animation: none !important; }
 }
+
+/* Chongqing: busy lights behind, so the panels and controls are more solid. */
+[data-theme="chongqing"][data-style="world"] {
+  --panel: rgba(12, 10, 26, .82); --panel-mix: rgba(12, 10, 26, .88); --bar: rgba(10, 8, 22, .92);
+  --pad: rgba(44, 36, 66, .95); --panel-2: rgba(52, 44, 78, .95); --panel-3: rgba(70, 60, 100, .95);
+}
+
+/* Busy or bright scenes: solid controls so they read clearly. */
+[data-theme="timessquare"][data-style="world"] {
+  --panel: rgba(16, 10, 30, .82); --panel-mix: rgba(16, 10, 30, .88); --bar: rgba(12, 8, 24, .92);
+  --pad: rgba(46, 34, 72, .95); --panel-2: rgba(56, 42, 86, .95); --panel-3: rgba(74, 58, 108, .95);
+}
+[data-theme="rainforest"][data-style="world"] {
+  --panel: rgba(8, 24, 14, .8); --panel-mix: rgba(8, 24, 14, .86); --bar: rgba(6, 18, 10, .92);
+  --pad: rgba(26, 52, 34, .95); --panel-2: rgba(32, 62, 40, .95); --panel-3: rgba(44, 80, 54, .95);
+}
+:is([data-theme="chongqing"], [data-theme="timessquare"], [data-theme="rainforest"])[data-style="world"] :is(.cue, .play, .tog:not(.on), .stem, .loop-len, .loop-arrows button, .pad) { background-color: var(--pad); }
+
+/* An empty deck says so in a readable muted white over the scenes. */
+[data-style="world"] .deck:not(.loaded) .deck-title .title, [data-under="on"] .deck:not(.loaded) .deck-title .title { color: rgba(255, 255, 255, .6); }
