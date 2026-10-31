@@ -355,3 +355,14 @@
   --panel: rgba(12, 10, 26, .82); --panel-mix: rgba(12, 10, 26, .88); --bar: rgba(10, 8, 22, .92);
   --pad: rgba(44, 36, 66, .95); --panel-2: rgba(52, 44, 78, .95); --panel-3: rgba(70, 60, 100, .95);
 }
+
+/* Busy or bright scenes: solid controls so they read clearly. */
+[data-theme="timessquare"][data-style="world"] {
+  --panel: rgba(16, 10, 30, .82); --panel-mix: rgba(16, 10, 30, .88); --bar: rgba(12, 8, 24, .92);
+  --pad: rgba(46, 34, 72, .95); --panel-2: rgba(56, 42, 86, .95); --panel-3: rgba(74, 58, 108, .95);
+}
+[data-theme="rainforest"][data-style="world"] {
+  --panel: rgba(8, 24, 14, .8); --panel-mix: rgba(8, 24, 14, .86); --bar: rgba(6, 18, 10, .92);
+  --pad: rgba(26, 52, 34, .95); --panel-2: rgba(32, 62, 40, .95); --panel-3: rgba(44, 80, 54, .95);
+}
+:is([data-theme="chongqing"], [data-theme="timessquare"], [data-theme="rainforest"])[data-style="world"] :is(.cue, .play, .tog:not(.on), .stem, .loop-len, .loop-arrows button, .pad) { background-color: var(--pad); }

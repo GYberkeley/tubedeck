@@ -1051,7 +1051,7 @@ function applyTheme(name) {
 class ShaderLayer {
   // budget caps the drawn pixels; fps caps the frame rate (the 3D worlds are costly).
   constructor(selector, scenes, { maxScale, budget = Infinity, fps = 60 }) {
-    Object.assign(this, { selector, scenes, maxScale, budget, fps, gl: null, progs: {}, scene: null, t: 0, last: 0, drawn: 0 });
+    Object.assign(this, { selector, scenes, maxScale, budget, fps, gl: null, progs: {}, scene: null, t: 0, last: 0, drawn: 0, quality: .85, slow: 0, frames: 0 });
   }
   setActive(name) {
     this.scene = this.scenes[name] ? name : null;
@@ -1080,12 +1080,22 @@ class ShaderLayer {
   draw(now) {
     if (!this.scene || !this.gl || document.hidden) return;
     if (now - this.drawn < 1000 / this.fps - 4) return;
+    // Dynamic resolution: if frames arrive late the GPU is saturated, so render fewer
+    // pixels; with headroom, creep back up towards full quality.
+    if (this.drawn) {
+      const gap = now - this.drawn;
+      this.slow += gap > 1000 / this.fps * 1.35 ? 1 : 0;
+      if (++this.frames >= 20) {
+        this.quality = this.slow > 6 ? Math.max(.45, this.quality * .85) : this.slow < 2 ? Math.min(1, this.quality * 1.05) : this.quality;
+        this.frames = this.slow = 0;
+      }
+    }
     this.drawn = now;
     const dt = Math.min(0.1, (now - (this.last || now)) / 1000); this.last = now;
     if (!matchMedia('(prefers-reduced-motion: reduce)').matches) this.t += dt * (sceneBpm || 120) / 120;
     const prog = this.program(this.scene);
     if (!prog) return;
-    const { gl, cv } = this, scale = Math.min(this.maxScale, window.devicePixelRatio || 1, Math.sqrt(this.budget / Math.max(1, cv.clientWidth * cv.clientHeight)));
+    const { gl, cv } = this, scale = Math.min(this.maxScale, window.devicePixelRatio || 1, Math.sqrt(this.budget / Math.max(1, cv.clientWidth * cv.clientHeight))) * this.quality;
     const w = Math.round(cv.clientWidth * scale), h = Math.round(cv.clientHeight * scale);
     if (!w || !h) return;
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; gl.viewport(0, 0, w, h); }
@@ -1100,7 +1110,7 @@ class ShaderLayer {
 // audio thread is untouched): the waveform band, and for some themes a full-screen
 // scene behind the console, drawn at reduced resolution.
 const vista = new ShaderLayer('.scene.vista .water', SCENES, { maxScale: 1.25 });
-const under = new ShaderLayer('.under', UNDER_SCENES, { maxScale: .8, budget: 8e5, fps: 30 });
+const under = new ShaderLayer('.under', UNDER_SCENES, { maxScale: 1.2, budget: 2e6, fps: 30 });
 function setScenes(name) {
   vista.setActive(name); under.setActive(name);
   document.documentElement.dataset.scene = vista.scene ? 'shader' : '';

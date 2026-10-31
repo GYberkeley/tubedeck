@@ -61,63 +61,114 @@ float shadow_${map}(vec3 ro, vec3 rd, float tmax){ float r = 1., d = .06;
 float ao_${map}(vec3 q, vec3 n){ float o = 0., s = 1.; for (int i = 1; i <= 4; i++) { float h = .15 * float(i); o += (h - ${map}(q + n * h)) * s; s *= .6; } return clamp(1. - 1.2 * o, 0., 1.); }`;
 
 const WORLDS = {
-  // Switzerland: a ridged massif with a Matterhorn-like horn over an alpine lake, snow
-  // by slope and height, soft shadows, aerial haze and drifting cloud.
+  // Switzerland: a green alpine valley in summer. Bright rolling meadows and a milky
+  // turquoise river up front, conifer stands on the slopes, chalets and a white church
+  // with its steeple, rock walls rising to snowfields and a horn, cumulus in a blue sky.
   alps: WORLD(`
-const vec3 SUN = vec3(.737, .521, -.430);
+const vec3 SUN = vec3(.6, .62, -.5);
 ${ridged('rLo', 5)}
-${ridged('rHi', 9)}
-float alpsH(vec2 x, float r){
-  float far = smoothstep(7., 26., x.y);
-  float horn = exp(-pow(length((x - vec2(6., 40.)) * vec2(1., .8)) * .13, 1.6));
-  float h = r * (.4 + 3.3 * far) + horn * (3.6 + 1.4 * r);
-  float lake = smoothstep(7., 1.5, length((x - vec2(-.6, 8.5)) * vec2(.3, .75)));
-  return h + .12 - 1.1 * lake;
+${ridged('rHi', 8)}
+float b0, b1, b2, b3, b4, b5;                            // building ground heights, set in main
+float river(vec2 x){ return abs(x.x - 1.4 - 2.2 * sin(x.y * .13 + .5)); }
+float baseH(vec2 x, float r){
+  float far = smoothstep(18., 36., x.y);
+  float horn = exp(-pow(length((x - vec2(5., 48.)) * vec2(1., .8)) * .12, 1.6));
+  float side = smoothstep(7., 17., abs(x.x - 1.)) * smoothstep(3., 14., x.y);
+  float meadow = .35 * fbm(x * .16) + .2 * sin(x.x * .45 + 1.) * sin(x.y * .32);
+  float h = meadow + side * (1. + 2.8 * r) + far * (r * 4.4 + .8) + horn * (4.2 + 1.6 * r);
+  return h - .6 * smoothstep(1.2, .45, river(x)) * (1. - far);
 }
-float mapA(vec3 q){ return (q.y - alpsH(q.xz, rLo(q.xz * .14))) * .55; }
-${sdfKit('mapA', 130)}
+float trees(vec2 x, float g){
+  vec2 id = floor(x / .6), q = mod(x, .6) - .3 - (vec2(hash(id + 4.), hash(id + 6.)) - .5) * .2;
+  float forest = step(.55, fbm(x * .11 + 3.)) * step(.35, g) * step(g, 3.2) + step(.985, hash(id + 1.)) * step(.15, g) * step(g, 2.5);
+  if (forest < .5 || river(x) < 1.5 || x.y < 9.) return 0.;
+  float H = .5 + .45 * hash(id + 2.), r = length(q);
+  return max(0., H * (1. - r / .27)) * (1. - .18 * fract(r * 13.));
+}
+float hill(vec2 x){ return baseH(x, rLo(x * .14)); }
+float roofPrism(vec3 q, float w, float h){                 // gable roof, ridge along z
+  return max(max(dot(vec2(abs(q.x), q.y), normalize(vec2(h, w))) - w * h / length(vec2(w, h)), -q.y), abs(q.z) - .52);
+}
+float chalet(vec3 p, vec3 c, float a){
+  vec3 q = p - c; q.xz = rot(a) * q.xz;
+  if (length(q) > 2.) return length(q) - 1.5;
+  return min(sdBox(q - vec3(0., .32, 0.), vec3(.42, .32, .36)), roofPrism(q - vec3(0., .64, 0.), .6, .32));
+}
+float church(vec3 p, vec3 c){
+  vec3 q = p - c;
+  if (length(q) > 3.5) return length(q) - 3.;
+  float nave = min(sdBox(q - vec3(0., .4, .4), vec3(.38, .4, .7)), roofPrism(q - vec3(0., .8, .4), .45, .35));
+  float tower = sdBox(q - vec3(0., .9, -.45), vec3(.2, .9, .2));
+  vec3 s = q - vec3(0., 1.8, -.45);
+  float spire = max(max(dot(vec2(abs(s.x), s.y), normalize(vec2(1., .25))), dot(vec2(abs(s.z), s.y), normalize(vec2(1., .25)))) - .2 * .97, -s.y);
+  return min(min(nave, tower), spire);
+}
+float village(vec3 p){
+  if (p.z < 5. || p.z > 22.) return max(5. - p.z, p.z - 22.) + .5;
+  return min(min(min(chalet(p, vec3(-2.6, b0, 9.), .3), chalet(p, vec3(3.9, b1, 12.), -.4)),
+             min(chalet(p, vec3(-5.2, b2, 14.5), .1), chalet(p, vec3(5.8, b3, 8.5), .6))),
+             min(church(p, vec3(-3.6, b4, 19.)), chalet(p, vec3(1.2, b5, 17.), -.2)));
+}
+float land(vec2 x){ float g = hill(x); return g + trees(x, g); }
+float mapA(vec3 q){ return min((q.y - land(q.xz)) * .3, village(q)); }
+${sdfKit('mapA', 230)}
 vec3 sky(vec3 rd, vec3 ro){
   float y = max(rd.y, 0.);
-  vec3 c = mix(vec3(.62, .78, .95), vec3(.1, .32, .78), pow(y, .5));
-  c += vec3(1., .9, .75) * pow(max(dot(rd, SUN), 0.), 6.) * .25;
+  vec3 c = mix(vec3(.55, .76, .98), vec3(.12, .38, .86), pow(y, .45));
+  c += vec3(1., .92, .75) * pow(max(dot(rd, SUN), 0.), 8.) * .25;
   if (rd.y > 0.) {
-    vec2 q = ro.xz + rd.xz * (16. - ro.y) / rd.y;
-    float cl = fbm(q * .045 + vec2(t * .012, 0.)) + .4 * fbm(q * .16 - vec2(t * .02, 0.));
-    c = mix(c, vec3(1.02, 1.02, 1.04), smoothstep(.72, 1.05, cl) * smoothstep(0., .12, rd.y) * .85);
+    vec2 q = ro.xz + rd.xz * (22. - ro.y) / rd.y;
+    float cl = fbm(q * .035 + vec2(t * .01, 0.)) + .5 * fbm(q * .11 - vec2(t * .015, 0.));
+    float dens = smoothstep(.78, 1.05, cl), lit = smoothstep(.7, 1.15, cl + .25 * fbm(q * .2 + 3.));
+    c = mix(c, mix(vec3(.72, .76, .84), vec3(1.05), lit), dens * smoothstep(0., .1, rd.y));
   }
   return c;
 }
 vec3 shade(vec3 q, vec3 rd, float d){
-  vec2 e = vec2(.004 + .0015 * d, 0.);
-  float h0 = alpsH(q.xz, rHi(q.xz * .14));
-  vec3 n = normalize(vec3(alpsH(q.xz - e.xy, rHi((q.xz - e.xy) * .14)) - alpsH(q.xz + e.xy, rHi((q.xz + e.xy) * .14)), 2. * e.x,
-                          alpsH(q.xz - e.yx, rHi((q.xz - e.yx) * .14)) - alpsH(q.xz + e.yx, rHi((q.xz + e.yx) * .14))));
-  float dirt = fbm(q.xz * 1.7 + q.y);
-  vec3 m = mix(vec3(.26, .21, .17), vec3(.46, .4, .33), dirt);
-  m = mix(m, mix(vec3(.1, .3, .04), vec3(.32, .5, .08), fbm(q.xz * .7)), smoothstep(.7, .86, n.y) * smoothstep(1.9, .9, h0));
-  float snow = smoothstep(.42, .7, n.y + (h0 - 1.9) * .3 + (dirt - .5) * .5) * smoothstep(1., 1.8, h0);
-  m = mix(m, vec3(.95, .97, 1.), snow);
+  vec3 n = normal_mapA(q, .003 + .0012 * d);
+  float tol = .02 + .0015 * d, v = village(q);
+  vec3 m;
+  if (v < tol) {                                          // chalets: white plaster, dark timber, red roofs, windows
+    bool roof = n.y > .3;
+    m = roof ? vec3(.5, .16, .08) : (fract(q.y * 3.) < .5 && q.y - floor(q.y) > .0 ? vec3(.92, .9, .86) : vec3(.92, .9, .86));
+    float upper = step(.5, fract((q.y + 10.) * 1.)) ;
+    if (!roof) {
+      m = mix(vec3(.93, .91, .87), vec3(.35, .2, .1), step(.35, fract(q.y + 10. - b0 * 0.)) * 0.);
+      vec2 w = fract(vec2((abs(n.x) > .5 ? q.z : q.x) * 4., q.y * 4.));
+      m = mix(m, vec3(.12, .1, .1), step(.3, w.x) * step(w.x, .7) * step(.35, w.y) * step(w.y, .7));
+      m = mix(m, vec3(.85, .15, .2), step(.3, w.x) * step(w.x, .7) * step(.2, w.y) * step(w.y, .3));     // flower boxes
+    }
+  } else if (trees(q.xz, hill(q.xz)) > .02) {
+    m = mix(vec3(.03, .12, .04), vec3(.07, .2, .06), noise(q.xz * 3.));
+    n = normalize(n + (vec3(noise3(q * 10. + vec3(t * .5, 0., 0.)), .5, noise3(q * 10. + 3.)) - .5) * .5);
+  } else {
+    float hgt = q.y, dirt = fbm(q.xz * 1.6 + q.y);
+    vec3 rock = mix(vec3(.42, .4, .38), vec3(.68, .64, .58), dirt);
+    vec3 grass = mix(vec3(.12, .42, .05), vec3(.4, .7, .1), smoothstep(.3, .7, fbm(q.xz * .35)));
+    grass *= .85 + .3 * noise(q.xz * 2.5);
+    grass = mix(grass, vec3(1., .9, .3), step(.93, noise(q.xz * 30.)) * .6 * (1. - aaFade(d, .03)));   // buttercups
+    m = mix(rock, grass, smoothstep(.62, .8, n.y) * smoothstep(4.2, 2.6, hgt));
+    m = mix(m, vec3(.96, .98, 1.), smoothstep(.45, .7, n.y + (hgt - 4.2) * .35 + (dirt - .5) * .5) * smoothstep(3.6, 4.6, hgt));
+    n = normalize(n + (vec3(noise3(q * 14. + vec3(t * .9, 0., 0.)), .5, noise3(q * 14. - 2.)) - .5) * .25 * smoothstep(.62, .8, n.y));
+  }
   float dif = max(dot(n, SUN), 0.);
-  float sh = dif > 0. ? shadow_mapA(q + n * .03, SUN, 25.) : 0.;
-  vec3 lin = dif * sh * vec3(2.3, 2.1, 1.75) + (.55 + .45 * n.y) * vec3(.24, .34, .55) + max(dot(n, normalize(-SUN * vec3(1., 0., 1.))), 0.) * vec3(.07, .06, .05);
-  vec3 c = m * lin;
-  return mix(c, vec3(.55, .7, .92), 1. - exp(-d * .007));
+  float sh = dif > 0. ? shadow_mapA(q + n * .03, SUN, 20.) : 0.;
+  vec3 lin = dif * sh * vec3(2.3, 2.15, 1.8) + (.55 + .45 * n.y) * vec3(.24, .34, .52);
+  return mix(m * lin * ao_mapA(q, n), vec3(.6, .74, .94), 1. - exp(-max(d - 6., 0.) * .007));
 }`, `
-  vec3 ro = vec3(1.4 * sin(t * .01), 1.45, 0.);
+  b0 = hill(vec2(-2.6, 9.)); b1 = hill(vec2(3.9, 12.)); b2 = hill(vec2(-5.2, 14.5));
+  b3 = hill(vec2(5.8, 8.5)); b4 = hill(vec2(-3.6, 19.)); b5 = hill(vec2(1.2, 17.));
+  vec3 ro = vec3(.6 + .5 * sin(t * .01), 1.7, -1.);
   vec3 rd = view(p, 1.5);
-  float dT = march_mapA(ro, rd, 80.);
+  float dT = march_mapA(ro, rd, 90.);
   float dW = rd.y < 0. ? -ro.y / rd.y : 1e5;
-  if (dW < dT && dW < 80.) {
+  if (dW < dT && dW < 90.) {                              // glacial river: milky turquoise, foam running downstream
     vec3 q = ro + rd * dW;
-    vec2 w = vec2(noise(q.xz * vec2(5., 1.6) + vec2(0., t * .2)), noise(q.xz * vec2(3., 1.2) - vec2(t * .12, 0.))) - .5;
-    vec3 n = normalize(vec3(w.x * .05, 1., w.y * .1));
-    vec3 rr = reflect(rd, n);
-    float dR = march_mapA(q + vec3(0., .02, 0.), rr, 80.);
-    vec3 rc = dR < 80. ? shade(q + rr * dR, rr, dR + dW) : sky(rr, q);
-    float fr = .03 + .97 * pow(1. - max(dot(n, -rd), 0.), 5.);
-    col = mix(vec3(.01, .14, .17), rc, .5 + .45 * fr);
-    col = mix(col, vec3(.55, .7, .92), 1. - exp(-dW * .007));
-  } else if (dT < 80.) col = shade(ro + rd * dT, rd, dT);
+    float flow = noise(vec2(q.x * 3., q.z * .8 + t * 1.6)) * noise(vec2(q.x * 7., q.z * 2. + t * 2.4));
+    col = mix(vec3(.35, .72, .7), vec3(.9, .97, .96), smoothstep(.25, .5, flow));
+    col = mix(col, sky(reflect(rd, vec3(0., 1., 0.)), q), .15);
+    col = mix(col, vec3(.6, .74, .94), 1. - exp(-max(dW - 6., 0.) * .007));
+  } else if (dT < 90.) col = shade(ro + rd * dT, rd, dT);
   else col = sky(rd, ro);
 `),
 
@@ -635,6 +686,11 @@ vec3 ad(vec2 uv, float k, float s){
   }
   return mix(a, b, step(.5, fract((uv.x - uv.y * .5) * 4. - t * .5)));            // stripes
 }
+vec3 adCycle(vec2 uv, float k, float s){
+  float clk = t * .1 + k * 7.31, ph = fract(clk), gen = floor(clk);
+  vec3 c = ad(uv, fract(k + gen * .618), fract(s + gen * .382));
+  return mix(c, vec3(1.), step(uv.x, ph * 25.) * step(ph * 25. - .25, uv.x) * step(ph, .04));
+}
 vec3 shade(vec3 q, vec3 rd, float d){
   vec3 n = normal_mapT(q, .002 + .001 * d);
   float w = .03 + d * .0022;
@@ -667,7 +723,7 @@ vec3 shade(vec3 q, vec3 rd, float d){
     float u = abs(n.z) > .5 ? (q.x + 2.2) / 4.4 : (q.z - 41.4) / 5.2;
     float row = floor(q.y / 2.2), v = fract(q.y / 2.2);
     if (v < .08 || u < .05 || u > .95) return mix(vec3(.25, .22, .35) * cel, INK, step(v, .04));
-    return ad(vec2(u, (v - .08) / .92), hash(vec2(row, 3.)), hash(vec2(row, 5.)));
+    return adCycle(vec2(u, (v - .08) / .92), hash(vec2(row, 3.)), hash(vec2(row, 5.)));
   }
   if (backdrop(q) < .03) {                                // towers behind, windows lit
     float id = floor(q.x / 6.);
@@ -695,7 +751,7 @@ vec3 shade(vec3 q, vec3 rd, float d){
   float frame = min(min(f.x, 1. - f.x) * 9., min(f.y, 1. - f.y) * (top - 2.6) / rows);
   if (frame < .35) return mix(vec3(.85, .85, .9) * cel, INK, step(frame, .12));
   vec2 bu = (f - vec2(.04, .04 * rows)) / (1. - vec2(.08, .08 * rows));
-  return ad(bu, hash(cell + id * 2.7), hash(cell + id * 1.3));
+  return adCycle(bu, hash(cell + id * 2.7), hash(cell + id * 1.3));
 }`, `
   vec3 ro = vec3(.4 * sin(t * .01), 3., -2.);
   vec3 rd = view(p, 1.05);
