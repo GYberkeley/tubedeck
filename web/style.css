@@ -272,3 +272,13 @@ dialog input { padding: 8px 10px; border-radius: 4px; border: 1px solid var(--li
   * { transition: none !important; }
   .deck.playing .disc-icon { animation: none; }
 }
+
+/* DJ controller settings */
+.midi-box { border: 1px solid #333; border-radius: 6px; padding: 8px 12px 4px; margin: 12px 0; }
+.midi-box legend { font-weight: 700; padding: 0 4px; }
+.midi-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.midi-monitor { height: 7.5em; overflow: hidden; margin: 8px 0; padding: 6px 8px; background: #0c0c0c; border-radius: 4px; font: 11px/1.25 ui-monospace, Menlo, monospace; color: #9fd29f; white-space: pre; }
+body.midi-learning [data-learnable] { outline: 1px dashed #ffcf6b88; outline-offset: 2px; }
+body.midi-learning .midi-target { outline: 2px solid #ffcf6b !important; outline-offset: 2px; }
+.midi-learn-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; background: #1d1a10; border: 1px solid #ffcf6b; color: #ffe7a8; padding: 8px 14px; border-radius: 8px; font-size: 13px; display: flex; gap: 12px; align-items: center; }
+#list li.midi-sel { box-shadow: inset 3px 0 0 #ffcf6b; background: rgba(255, 207, 107, .08); }

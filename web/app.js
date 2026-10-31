@@ -71,7 +71,7 @@ document.addEventListener('pointerdown', () => audio(), { capture: true });
 const knobs = {};
 class Knob {
   constructor(el, onChange) {
-    this.el = el; this.onChange = onChange;
+    this.el = el; this.onChange = onChange; el._knob = this;  // MIDI reaches knobs through the element
     this.min = +el.dataset.min; this.max = +el.dataset.max; this.def = +el.dataset.default; this.value = +el.dataset.value;
     // Centre-detented knobs (EQ, trim, CFX) put the default at 12 o'clock even when
     // the range is lopsided (EQ: -26 dB kill .. +6 dB), like a real mixer.
@@ -972,6 +972,38 @@ class Deck {
     // lostpointercapture also fires when the browser drops the touch without a pointerup.
     ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(t => ring.addEventListener(t, end));
     window.addEventListener('blur', () => this.finishJog());
+  }
+
+  // Hardware jog wheels (midi.js). Touching the platter top scratches; turning the rim
+  // nudges the tempo while playing, or searches while paused.
+  jogTouch(on) {
+    if (on) {
+      if (!this.track || this.hwJog) return;
+      this.hwJog = { wasPlaying: !this.el.paused, pos: this.el.currentTime };
+      this.startSlip();
+      this.scratching = true; this.scratchPos = this.hwJog.pos;
+      this.el.scratch(true, this.hwJog.pos);
+    } else if (this.hwJog) {
+      const j = this.hwJog; this.hwJog = null;
+      this.scratching = false;
+      this.el.scratch(false, j.pos, j.wasPlaying);
+      this.endSlip();
+    }
+  }
+  jogTurn(turns, scratch) {
+    if (!this.track) return;
+    if (scratch && this.hwJog) {
+      const j = this.hwJog;
+      j.pos = clamp(j.pos + turns * SECONDS_PER_JOG_TURN, 0, this.el.duration || 0);
+      this.scratchPos = j.pos; this.lastJogMove = performance.now();
+      return this.el.scratch(true, j.pos);
+    }
+    if (this.hwJog) return;
+    if (this.el.paused) { this.el.currentTime = clamp(this.el.currentTime + turns * SECONDS_PER_JOG_TURN, 0, this.el.duration || 0); return; }
+    this.bend = clamp(this.bend + turns * 0.6, -0.12, 0.12);
+    this.el.playbackRate = this.rate * (1 + this.bend);
+    clearTimeout(this.bendTimer);
+    this.bendTimer = setTimeout(() => { this.bend = 0; this.el.playbackRate = this.rate; }, 80);
   }
 
   bindOverview() {

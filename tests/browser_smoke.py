@@ -393,6 +393,59 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_midi_controller(self):
+        """DDJ messages drive the decks and mixer, lights follow the state, and MIDI learn binds any control."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0", timeout=30000)
+        # Pretend a DDJ-FLX4 is plugged in, and capture what the app sends back to it.
+        pg.evaluate("""() => { midi.preset = PRESETS[0]; window.sent = []; midi.outputs = [{ send: b => sent.push(b) }];
+            window.rx = (...b) => midi.receive(new Uint8Array(b)); }""")
+        pg.evaluate("rx(0x90, 0x0B, 0x7F); rx(0x90, 0x0B, 0)")                 # PLAY
+        pg.wait_for_function("!decks.A.el.paused")
+        pg.evaluate("rx(0xB6, 0x1F, 0x7F); rx(0xB6, 0x3F, 0x7F)")              # crossfader all the way right
+        self.assertAlmostEqual(pg.evaluate("+document.querySelector('#xfader').value"), 1, places=2)
+        pg.evaluate("rx(0xB0, 0x07, 0); rx(0xB0, 0x27, 0)")                    # EQ high fully cut
+        self.assertEqual(pg.evaluate("mixer.channels.A.knobs.high.value"), pg.evaluate("mixer.channels.A.knobs.high.min"))
+        pg.evaluate("rx(0xB0, 0x00, 0x7F); rx(0xB0, 0x20, 0x7F)")              # tempo fader at the bottom: fastest
+        self.assertAlmostEqual(pg.evaluate("decks.A.tempo"), 8, places=1)
+        pg.evaluate("rx(0x97, 0x00, 0x7F); rx(0x97, 0x00, 0)")                 # hot cue pad 1 sets a cue
+        self.assertIsNotNone(pg.evaluate("decks.A.hot[0]"))
+        pg.evaluate("rx(0x97, 0x62, 0x7F)")                                    # beat loop pad 3: a 1-beat loop
+        self.assertEqual(pg.evaluate("decks.A.mode"), "loop")
+        self.assertEqual(pg.evaluate("decks.A.loop && decks.A.loop.beats"), 1)
+        pg.evaluate("rx(0x90, 0x4D, 0x7F)")                                    # RELOOP/EXIT leaves it
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+        # Jog: touch the top and turn back half a turn, then let go and play resumes.
+        pg.evaluate("decks.A.el.currentTime = 10")
+        pg.wait_for_timeout(200)
+        before = pg.evaluate("decks.A.el.currentTime")
+        pg.evaluate("rx(0x90, 0x36, 0x7F); for (let i = 0; i < 36; i++) rx(0xB0, 0x22, 64 - 10)")   # 360 ticks back
+        self.assertAlmostEqual(pg.evaluate("decks.A.scratchPos"), before - 0.9, delta=0.05)   # half a turn of 1.8 s
+        pg.evaluate("rx(0x90, 0x36, 0)")
+        self.assertIsNone(pg.evaluate("decks.A.hwJog"))
+        self.assertFalse(pg.evaluate("decks.A.scratching"))
+        # Lights: play is lit on deck 1 and the hot cue pad that holds a cue.
+        pg.evaluate("rx(0x90, 0x1B, 0x7F); midi.lights()")                    # HOT CUE mode button
+        sent = pg.evaluate("sent.map(b => Array.from(b).join(','))")
+        self.assertIn("144,11,127", sent)
+        self.assertIn("151,0,127", sent)
+        # MIDI learn: click the deck 2 SLIP button, then press an unmapped note.
+        pg.evaluate("midi.preset = null; midi.access = {}; midi.startLearn()")
+        pg.click(".deck[data-deck=B] .slip")
+        pg.evaluate("rx(0x9F, 0x30, 0x7F)")
+        pg.evaluate("midi.stopLearn()")
+        self.assertFalse(pg.evaluate("decks.B.slip"))
+        pg.evaluate("rx(0x9F, 0x30, 0x7F); rx(0x9F, 0x30, 0)")
+        self.assertTrue(pg.evaluate("decks.B.slip"))
+        pg.evaluate("localStorage.removeItem('tubedeck.midiMap')")
+        self.assertEqual(errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
@@ -427,7 +480,7 @@ class BrowserSmoke(unittest.TestCase):
         """Each theme applies its colours to the canvases, keeps the layout intact and is remembered."""
         pg = self.page()
         for theme in ["forest", "waterfall", "meadow", "ocean", "desert", "snow", "space", "rainforest", "alps",
-                      "hakone", "wulong", "chongqing", "timessquare", "aurora", "classic"]:
+                      "hakone", "wulong", "chongqing", "timessquare", "williamsburg", "aurora", "classic"]:
             pg.select_option("#themeSel", theme)
             self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), theme)
             colours = pg.evaluate("[THEME.low, THEME.A, decks.A.color]")

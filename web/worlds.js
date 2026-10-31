@@ -296,17 +296,18 @@ vec3 shade(vec3 q, vec3 rd, float d){
   wulong: WORLD(`
 const vec3 SUN = vec3(.3, .87, -.39);
 float cx(float z){ return 1.2 * sin(z * .07); }
-float veg(vec3 p){ return smoothstep(.48, .66, fbm(vec2(p.z * .14 + p.x * .1, p.y * .2)) + .25 * smoothstep(12., 16., p.y)); }
+float veg(vec3 p){ return smoothstep(.48, .66, fbm(vec2(p.z * .14 + p.x * .1, p.y * .2)) + .25 * smoothstep(9., 12., p.y)); }
 float rock(vec3 p){
   float x = p.x - cx(p.z);
   float strata = .45 * noise(vec2(p.z * .2, p.y * 1.1)) + .25 * sin(p.y * 1.7 + 2. * noise(vec2(p.z * .15, 1.))) * noise(vec2(p.z * .3, p.y * .4));
-  float air = 4.3 + 1. * sin(p.z * .045 + 1.) - abs(x) + strata - .8 * noise(vec2(p.z * .1, p.y * .15));
-  float walls = max(air, p.y - (16. + 3. * fbm(p.xz * .1)));
+  float ledges = .22 * smoothstep(-.3, 1., sin(p.y * 2.8 + 2. * noise(vec2(p.z * .2, 3.))));
+  float air = 4.3 + 1. * sin(p.z * .045 + 1.) + 3. * smoothstep(8., -14., p.z) - abs(x) + strata + ledges - .8 * noise(vec2(p.z * .1, p.y * .15));
+  float walls = max(air, p.y - (12. + 3. * fbm(p.xz * .1)));
   float slab = max(44. - p.z + .5 * noise(p.xy * .4), p.z - 52.);
-  float arch = length(vec2(x / 3.4, (p.y + 1.) / 9.5)) - 1.;
-  float bridge = max(max(slab, -arch * 3.), p.y - 15.5 - fbm(p.xz * .2) * 2.);
+  float arch = length(vec2(x / 3.6, (p.y + 1.) / 6.5)) - 1. + .06 * noise(p.xy * 2.);
+  float bridge = max(max(slab, -arch * 3.), p.y - 10.5 - fbm(p.xz * .2) * 1.5);
   float d = min(walls, bridge);
-  float v = veg(p);
+  float v = veg(p) * (.35 + .65 * smoothstep(-10., 4., p.z));
   d -= v * (.45 + .3 * noise3(p * 2.5 + vec3(.15 * sin(t * .9 + p.y), 0., 0.)));      // foliage, swaying
   return d;
 }
@@ -330,7 +331,7 @@ ${sdfKit('mapW', 200)}
 vec3 sky(vec3 rd){ return mix(vec3(.85, .9, .92), vec3(.5, .68, .86), smoothstep(0., .6, rd.y)) + vec3(1., .95, .8) * pow(max(dot(rd, SUN), 0.), 6.) * .3; }
 vec3 shade(vec3 q, vec3 rd, float d){
   vec3 n = normal_mapW(q, .004 + .001 * d);
-  float g = ground(q), v = veg(q);
+  float g = ground(q), v = veg(q) * (.35 + .65 * smoothstep(-10., 4., q.z));
   vec3 m;
   if (g < rock(q) && q.y < 3.) {
     v = smoothstep(.12, .35, q.y);
@@ -342,6 +343,10 @@ vec3 shade(vec3 q, vec3 rd, float d){
     m = mix(vec3(.46, .45, .42), vec3(.66, .63, .57), noise(vec2((q.z + x) * 1.3, q.y * .12)));
     m = mix(m, vec3(.68, .5, .3), smoothstep(.55, .8, noise(vec2((q.z + x) * 1.6, q.y * .12))) * .8);   // ochre runs
     m *= .7 + .3 * smoothstep(.15, .5, noise(vec2((q.z - x) * 3., q.y * .2)));                        // grey water streaks
+    m *= .82 + .18 * smoothstep(.0, .08, abs(fract(q.y * .9 + .3 * noise(vec2(q.z * .3, 1.))) - .5));  // bedding lines
+    m *= .85 + .3 * noise3(q * 6.);
+    float vine = smoothstep(.7, .9, noise(vec2((q.z + x) * 4., 0.))) * smoothstep(0., 1.5, fract(q.y * .45 + .2) * 2.2 - noise(vec2((q.z + x) * 9., q.y)) * .8 - .3);
+    v = max(v, vine * .9 * (1. - aaFade(d, .05)));                                                     // vines hanging off ledges
   }
   float leafy = max(v, step(.5, v));
   if (v > .01) {
@@ -353,7 +358,7 @@ vec3 shade(vec3 q, vec3 rd, float d){
   float sh = dif > 0. ? shadow_mapW(q + n * .05, SUN, 25.) : 0.;
   vec3 lin = dif * sh * vec3(2.1, 1.95, 1.65) + (.45 + .55 * n.y) * vec3(.35, .42, .5) + v * pow(max(dot(rd, SUN), 0.), 2.) * vec3(.2, .3, .04);
   vec3 c = m * lin * ao_mapW(q, n);
-  return mix(c, vec3(.74, .82, .88), 1. - exp(-max(d - 10., 0.) * .009));
+  return mix(c, vec3(.74, .82, .88), 1. - exp(-max(d - 14., 0.) * .006));
 }`, `
   vec3 ro = vec3(cx(-16.) + .4 * sin(t * .01), 2.4, -16.);
   vec3 rd = view(p, 1.8);
@@ -368,6 +373,13 @@ vec3 shade(vec3 q, vec3 rd, float d){
     beams += smoothstep(.55, .8, noise(vec2(q.x * .4 - q.y * .25, q.z * .1))) * smoothstep(3., 12., q.y + 4.);
   }
   col += vec3(1., .95, .8) * beams * .025;
+  for (int i = 0; i < 6; i++) {                           // swallows wheeling in the gorge
+    float fi = float(i);
+    vec2 c = vec2(.35 * sin(t * (.11 + .03 * fi) + fi * 2.1), .27 + .06 * sin(t * (.17 + .02 * fi) + fi));
+    vec2 b = (p - c) * 260.; float flap = sin(t * 10. + fi * 1.7) * .7;
+    float bird = smoothstep(.2, 0., max(abs(b.y - abs(b.x) * flap) - .3 + .12 * abs(b.x), abs(b.x) - 2.4));
+    col = mix(col, vec3(.15, .16, .17), bird);
+  }
 `),
 
   // Rainforest: a river winding through a valley of tree crowns, each crown its own
@@ -764,6 +776,214 @@ vec3 shade(vec3 q, vec3 rd, float d){
   col = mix(col, sky, (1. - exp(-min(d, 120.) * .004)) * step(d, 120.));
   col *= .55 + .45 * smoothstep(-.15, .18, p.y);          // quieter behind the decks
 `, { raw: true }),
+
+  // Williamsburg: Domino Park at blue hour. The lawn with people lounging under lamp
+  // posts, the old brick sugar refinery and its rusted elevated walkway on the left, the
+  // Williamsburg Bridge strung with lights across the East River, and Manhattan's lit
+  // skyline beyond, all mirrored in the moving water.
+  williamsburg: WORLD(`
+const vec3 BA = vec3(-6., 0., 44.), BB = vec3(34., 0., 84.);
+const float TH = 7.5, DECK = 3.3;
+float mat;
+float cMin, cU, dMin, dU;                                     // closest approach to the cables / deck edge
+vec3 bridgeLocal(vec3 p){
+  vec2 a = normalize(BB.xz - BA.xz), r = p.xz - BA.xz;
+  return vec3(dot(r, vec2(-a.y, a.x)), p.y, dot(r, a));     // (across, up, along)
+}
+float cableY(float u, float L){
+  if (u < 0.) return TH - (TH - DECK - .3) * clamp(-u / 16., 0., 1.);
+  if (u > L) return TH - (TH - DECK - .3) * clamp((u - L) / 16., 0., 1.);
+  float s = u / L * 2. - 1.; return DECK + .5 + (TH - DECK - .5) * s * s;
+}
+float bridge(vec3 p){
+  float L = length(BB.xz - BA.xz);
+  vec3 b = bridgeLocal(p);
+  float bound = max(abs(b.x) - 2., b.y - TH - 1.);
+  if (bound > 1.) return bound;
+  float ut = b.z < L * .5 ? 0. : L;
+  vec3 t = vec3(b.x, b.y, b.z - ut);
+  float legs = sdBox(vec3(abs(t.x) - .75, t.y - TH * .5, t.z), vec3(.22, TH * .5, .32));
+  float braces = min(sdBox(vec3(t.x, t.y - TH + .15, t.z), vec3(.95, .15, .26)), sdBox(vec3(t.x, t.y - 5.6, t.z), vec3(.95, .1, .22)));
+  braces = min(braces, sdBox(vec3(t.x, t.y - 1.6, t.z), vec3(.95, .12, .22)));
+  float deck = sdBox(vec3(b.x, b.y - DECK, b.z - L * .5), vec3(1.05, .32, L * .5 + 18.));
+  float yc = cableY(b.z, L);
+  float cab = length(vec2(b.y - yc, abs(b.x) - .75)) - .05;
+  float edge = length(vec2(b.y - DECK + .2, abs(b.x) - 1.08));
+  cMin = min(cMin, cab); if (cab <= cMin) cU = b.z;
+  dMin = min(dMin, edge); if (edge <= dMin) dU = b.z;
+  float d = min(min(legs, braces), deck);
+  if (min(legs, braces) < deck) mat = 4.; else mat = 4.5;
+  if (cab * .7 < d) { mat = 4.2; d = cab * .7; }
+  return d;
+}
+float skyline(vec3 p){
+  if (p.z < 60.) return max(60. - p.z, .2);
+  float id = floor(p.x / 2.6); vec3 q = p; q.x = mod(p.x, 2.6) - 1.3;
+  float H = 1.2 + 3.6 * pow(hash(vec2(id, 1.)), 2.) + 3. * step(.93, hash(vec2(id, 9.)));
+  float zc = 64. + 8. * hash(vec2(id, 3.));
+  float bld = sdBox(q - vec3(0., H * .5 + .3, zc), vec3(.95 + .2 * hash(vec2(id, 4.)), H * .5, 1.6));
+  return min(bld, max(1.3 - abs(q.x), p.y - 8.5) + .3);
+}
+float refinery(vec3 p){
+  float r = sdBox(p - vec3(-10., 3.5, 14.), vec3(3., 3.5, 9.));
+  r = min(r, sdBox(p - vec3(-10.2, 7.2, 12.), vec3(2.6, .4, 6.)));
+  float chim = sdCyl(p.xz - vec2(-9., 20.), p.y - 6., .55 - .03 * p.y, 6.);
+  return min(r, chim);
+}
+float gantry(vec3 p){
+  if (abs(p.x + 5.) > 2. || p.z < -2. || p.z > 26.) return max(abs(p.x + 5.) - 1.5, max(-2. - p.z, p.z - 26.)) + .3;
+  float walk = sdBox(p - vec3(-5., 3.1, 12.), vec3(.9, .1, 13.));
+  float rail = sdBox(vec3(abs(p.x + 5.) - .9, p.y - 3.6, p.z - 12.), vec3(.03, .4, 13.));
+  vec3 c = p; c.z = mod(p.z, 4.) - 2.;
+  float cols = sdBox(vec3(abs(c.x + 5.) - .8, c.y - 1.6, c.z), vec3(.09, 1.6, .09));
+  float beam = sdBox(vec3(c.x + 5., c.y - 5., c.z), vec3(1., .12, .1));
+  float post = sdBox(vec3(abs(c.x + 5.) - .9, c.y - 4.1, c.z), vec3(.1, 1., .1));
+  return min(min(walk, rail), min(cols, min(beam, post)));
+}
+float lamps(vec3 p){
+  if (p.z < 9. || p.z > 12.5) return max(9. - p.z, p.z - 12.5) + .2;
+  vec3 q = p; q.x = mod(p.x + 1., 6.) - 3.;
+  float pole = sdCyl(q.xz - vec2(0., 10.9), q.y - 1.7, .05, 1.25);
+  float head = length(q - vec3(0., 3.05, 10.9)) - .15;
+  if (head < pole) mat = 7.5; else mat = 7.;
+  float rail = sdBox(vec3(p.x, p.y - 1.05, p.z - 11.7), vec3(60., .03, .03));
+  rail = min(rail, sdBox(vec3(mod(p.x, 1.2) - .6, p.y - .8, p.z - 11.7), vec3(.02, .3, .02)));
+  if (rail < min(pole, head)) mat = 9.;
+  return min(min(pole, head), rail);
+}
+float people(vec3 p){
+  if (p.z < 5. || p.z > 9.8 || p.y > 1.6) return max(max(5. - p.z, p.z - 9.8), p.y - 1.6) + .2;
+  vec2 id = floor(p.xz / 1.7); vec3 q = p; q.xz = mod(p.xz, 1.7) - .85;
+  float bound = max(.85 - max(abs(q.x), abs(q.z)) + .1, p.y - 1.6);
+  if (hash(id) < .55 || id.x * 1.7 < -3.5) return max(bound, .05);
+  q.xz -= (vec2(hash(id + 3.), hash(id + 5.)) - .5) * .5;
+  float lying = step(.7, hash(id + 8.));
+  float body = lying > .5 ? sdBox(q - vec3(0., .62, 0.), vec3(.45, .08, .12)) - .06 : length((q - vec3(0., .88, 0.)) * vec3(1.3, .7, 1.4)) - .2;
+  float head = length(q - (lying > .5 ? vec3(.55, .7, 0.) : vec3(0., 1.3, 0.))) - .11;
+  float legs = lying > .5 ? 1e3 : length(q - vec3(.18, .6, 0.)) - .14;
+  return min(min(min(body, head), legs), max(bound, .05));
+}
+float fountain(vec3 p){
+  if (p.x < 7. || p.x > 13. || p.z < 3. || p.z > 7.5) return max(max(7. - p.x, p.x - 13.), max(3. - p.z, p.z - 7.5)) + .2;
+  vec2 id = floor(p.xz / .9); vec3 q = p; q.xz = mod(p.xz, .9) - .45;
+  float h = .3 + .9 * pow(.5 + .5 * sin(t * 1.3 + hash(id) * 6.28), 2.);
+  return min(sdCyl(q.xz, q.y - .5 - h * .5, .035, h * .5), max(.45 - max(abs(q.x), abs(q.z)) + .05, .05));
+}
+float mapWB(vec3 p){
+  mat = 1.;
+  float d = max(p.y - .5, p.z - 12.);                     // the park
+  float far = max(p.y - .3, 60. - p.z);                   // Manhattan's shore
+  if (far < d) { d = far; mat = 2.; }
+  float s = skyline(p); if (s < d) { d = s; mat = 3.; }
+  float m0 = mat; float b = bridge(p); if (b < d) d = b; else mat = m0;
+  float r = refinery(p); if (r < d) { d = r; mat = 5.; }
+  float g = gantry(p); if (g < d) { d = g; mat = 6.; }
+  m0 = mat; float l = lamps(p); if (l < d) d = l; else mat = m0;
+  float pe = people(p); if (pe < d) { d = pe; mat = 8.; }
+  float f = fountain(p); if (f < d) { d = f; mat = 10.; }
+  return d;
+}
+${sdfKit('mapWB', 10, 0, false)}
+float marchWB(vec3 ro, vec3 rd, float tmax){
+  float d = .05; cMin = 1e3; dMin = 1e3;
+  float ca = 1e3, cu = 0., da = 1e3, du = 0.;
+  for (int i = 0; i < 150; i++) {
+    float h = mapWB(ro + rd * d);
+    if (cMin / d < ca) { ca = cMin / d; cu = cU; }
+    if (dMin / d < da) { da = dMin / d; du = dU; }
+    cMin = 1e3; dMin = 1e3;
+    if (h < .0012 * d) { cMin = ca; cU = cu; dMin = da; dU = du; return d; }
+    d += h; if (d > tmax) break;
+  }
+  cMin = ca; cU = cu; dMin = da; dU = du;
+  return 1e5;
+}
+vec3 sky(vec3 rd){
+  vec3 c = mix(vec3(.08, .18, .45), vec3(.01, .03, .14), smoothstep(0., .4, rd.y));
+  c += vec3(.3, .2, .25) * exp(-max(rd.y, 0.) * 22.) * .35;
+  vec2 q = rd.xz / (rd.y + .08);
+  c = mix(c, vec3(.08, .13, .3), smoothstep(.5, .85, fbm(q * .6 + vec2(t * .006, 0.))) * smoothstep(.04, .2, rd.y) * .7);
+  return c;
+}
+float lampPool(vec3 q){ float x = mod(q.x + 1., 6.) - 3.; return exp(-(x * x + (q.z - 10.9) * (q.z - 10.9)) * .12); }
+vec3 glows(vec3 ro, vec3 rd){
+  float cd = smoothstep(.3, .5, abs(fract(cU * .7) - .5)), dd = smoothstep(.25, .5, abs(fract(dU * 1.1) - .5));
+  return vec3(1., .82, .55) * exp(-cMin * 1800.) * cd * 2.2 + vec3(1., .78, .45) * exp(-cMin * 900.) * .06
+       + vec3(1., .66, .32) * exp(-dMin * 1500.) * dd * 1.8 + vec3(1., .6, .3) * exp(-dMin * 250.) * .05;
+}
+vec3 shade(vec3 q, vec3 rd, float d){
+  mapWB(q); float m = mat;
+  vec3 n = normal_mapWB(q, .002 + .001 * d);
+  vec3 amb = vec3(.1, .14, .26) * (.6 + .4 * n.y);
+  float pool = lampPool(q);
+  vec3 warm = vec3(1., .78, .5);
+  if (m < 1.5) {                                          // lawn, and the promenade by the railing
+    vec3 g = q.z > 10. ? vec3(.32, .3, .3) : mix(vec3(.08, .2, .06), vec3(.16, .32, .08), noise(q.xz * 1.5)) * (.8 + .4 * noise(q.xz * 9.));
+    return g * (amb * 1.6 + warm * pool * 1.6);
+  }
+  if (m < 2.5) return vec3(.02, .025, .04);
+  if (m < 3.5) {                                          // Manhattan towers: lit windows
+    float id = floor(q.x / 2.6);
+    vec2 gq = vec2((abs(n.z) > .5 ? q.x : q.z) * 3.2, q.y * 3.);
+    float win = step(.3, fract(gq.x)) * step(.3, fract(gq.y)) * step(.5, hash(floor(gq) + id));
+    vec3 wc = hash(vec2(id, 5.)) < .6 ? vec3(1., .8, .5) : vec3(.75, .85, 1.);
+    vec3 c = vec3(.025, .035, .07) + wc * mix(win, .22, aaFade(d, .3)) * .9;
+    float top = smoothstep(.25, 0., length(vec2(fract(q.x / 2.6) - .5, (q.y - 1.2 - 3.6 * pow(hash(vec2(id, 1.)), 2.) - 3. * step(.93, hash(vec2(id, 9.)))) * .3)));
+    return c + vec3(1., .1, .1) * top * step(.8, hash(vec2(id, 6.))) * (.5 + .5 * sin(t * 2. + id));
+  }
+  if (m < 4.8) {                                          // bridge steel: dark lattice, lit from below
+    vec3 b = bridgeLocal(q);
+    float lattice = smoothstep(.06, .0, abs(fract((b.z + (b.y - DECK) * 1.2) * .9) - .5) - .38) + smoothstep(.06, .0, abs(fract((b.z - (b.y - DECK) * 1.2) * .9) - .5) - .38);
+    vec3 c = vec3(.025, .03, .05) * (1. + .8 * min(lattice, 1.) * (1. - aaFade(d, .05)));
+    c += warm * .1 * smoothstep(.2, -.4, q.y - DECK) * step(4.4, m) * step(m, 4.6);
+    return c + amb * .25;
+  }
+  if (m < 5.5) {                                          // refinery brick with arched lit windows
+    vec2 w = vec2((abs(n.x) > .5 ? q.z : q.x) * .9, q.y * .75);
+    vec2 f = fract(w) - .5;
+    float arch = step(length(vec2(f.x * 1.6, max(f.y - .05, 0.) * 1.4)), .28) * step(-.3, f.y) * step(q.y, 6.6) * step(.6, q.y);
+    vec3 brick = vec3(.32, .14, .09) * (.75 + .3 * noise(q.yz * 6.)) * (.9 + .1 * step(.1, fract(q.y * 4.)));
+    float lit = step(.45, hash(floor(w) + 3.));
+    return brick * (amb * 1.4 + warm * .15) + mix(vec3(.04, .05, .08), warm * .9, lit) * arch * (1. - aaFade(d, .04) * .5);
+  }
+  if (m < 6.5) return mix(vec3(.22, .1, .05), vec3(.08, .38, .38), step(q.y, 2.95)) * (amb * 1.3 + warm * .12);  // rusted steel, teal struts
+  if (m < 7.25) return vec3(.06) * amb * 2. + warm * .05;
+  if (m < 7.75) return vec3(1.6, 1.4, 1.1);              // lamp heads
+  if (m < 8.5) {
+    vec2 id = floor(q.xz / 1.7);
+    vec3 c = q.y > 1.18 || (hash(id + 8.) > .7 && q.y > .68 && length(q.xz - (id * 1.7 + .85)) > .45) ? vec3(.45, .3, .22) : mix(vec3(.6, .15, .12), vec3(.15, .2, .45), hash(id + 2.));
+    return c * (amb * 1.5 + warm * pool * 1.4);
+  }
+  if (m < 9.5) return vec3(.15, .16, .18) * (amb + warm * .3);
+  return vec3(.3, .42, .55) * (.4 + .6 * noise(vec2(q.y * 12. - t * 6., q.x * 30.))) + warm * pool * .2;  // fountain jets
+}`, `
+  vec3 ro = vec3(2. + .3 * sin(t * .01), 1.7, -2.);
+  vec3 rd = view(p, 1.2);
+  float d = marchWB(ro, rd, 140.);
+  vec3 gl = glows(ro, rd);
+  float dW = rd.y < 0. ? -ro.y / rd.y : 1e5;
+  vec3 wq = ro + rd * dW;
+  if (dW < d && wq.z > 12. && wq.z < 62.) {               // the East River
+    vec2 rip = vec2(noise(wq.xz * vec2(1.2, 5.) + vec2(t * .3, 0.)), noise(wq.xz * vec2(.8, 7.) - vec2(0., t * .4))) - .5;
+    vec3 nW = normalize(vec3(rip.x * .04, 1., rip.y * .22));
+    vec3 rr = reflect(rd, nW);
+    float dR = marchWB(wq + vec3(0., .01, 0.), rr, 120.);
+    vec3 rc = dR < 120. ? shade(wq + rr * dR, rr, dR + dW) : sky(rr);
+    rc += glows(wq, rr);
+    col = mix(vec3(.01, .02, .05), rc, .55) + gl * .6;
+    d = dW;
+  } else {
+    col = d < 140. ? shade(ro + rd * d, rd, d) : sky(rd) + vec3(.9) * stars(rd, 120.) * smoothstep(.15, .4, rd.y) * .5;
+    col += gl;
+  }
+  col = mix(col, vec3(.05, .09, .22), (1. - exp(-max(min(d, 140.) - 20., 0.) * .005)) * .5);
+  for (int i = 0; i < 5; i++) {                           // halos round the lamp heads
+    vec3 lp = vec3(-1. + 6. * float(i) - 3. + 6., 3.05, 10.9) - ro;
+    vec2 sp = vec2(lp.x / lp.z * 1.2, lp.y / lp.z * 1.2 + HZ);
+    col += vec3(1., .8, .55) * exp(-dot(p - sp, p - sp) * 2200.) * .5 * step(lp.z * length(vec3(p.x, p.y - HZ, 1.2)) / 1.2, d + .5);
+  }
+  col *= .6 + .4 * smoothstep(-.15, .15, p.y);            // quieter behind the decks
+`),
 
   // Aurora: a still lake under the northern lights. Tall curtains ripple across the sky
   // and in the mirror-calm water, over soft snow-capped ridges and shoreline spruce.

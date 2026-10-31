@@ -278,6 +278,12 @@
   --deck-a: #ffd21f; --deck-b: #ff4fa0; --jog-bg: #0c0814; --jog-ring: #c89a00; --groove-a: #1e1630; --groove-b: #150f22;
   --wave-bg: #14101e; --wave-scrim: rgba(4,2,10,.15); --wave-low: #ffcc00; --wave-mid: #ff4fa0; --wave-high: #ffffff; --playhead: #7affea; --wave-halo: rgba(4,2,12,.62);
 }
+[data-theme="williamsburg"] {
+  --bg: #050a18; --bar: #070d1c; --panel: #0a1224; --panel-mix: #08101f; --panel-2: #1a2640; --panel-3: #243456; --pad: #121c32;
+  --line: #2c3e62; --line-soft: #162238; --text: #f6f3ee; --muted: #b6c0d6; --blue: #ffb45a; --cue: #ffd27a;
+  --deck-a: #ffb45a; --deck-b: #5ad2c8; --jog-bg: #060b16; --jog-ring: #b8782e; --groove-a: #111a2e; --groove-b: #0b1324;
+  --wave-bg: #0a1224; --wave-scrim: rgba(2,4,12,.14); --wave-low: #ffb45a; --wave-mid: #5ad2c8; --wave-high: #ffffff; --playhead: #ff6a4a; --wave-halo: rgba(2,4,14,.6);
+}
 [data-theme="aurora"] {
   --bg: #04080c; --bar: #060c12; --panel: #081018; --panel-mix: #070e15; --panel-2: #152634; --panel-3: #1e3446; --pad: #0f1c28;
   --line: #244056; --line-soft: #12212e; --text: #eefcf6; --muted: #9cc8bc; --blue: #3dffa0; --cue: #c79bff;
@@ -369,3 +375,10 @@
 
 /* An empty deck says so in a readable muted white over the scenes. */
 [data-style="world"] .deck:not(.loaded) .deck-title .title, [data-under="on"] .deck:not(.loaded) .deck-title .title { color: rgba(255, 255, 255, .6); }
+
+/* Williamsburg: night lights behind, so panels and controls are mostly solid. */
+[data-theme="williamsburg"][data-style="world"] {
+  --panel: rgba(8, 14, 30, .8); --panel-mix: rgba(8, 14, 30, .86); --bar: rgba(6, 10, 24, .92);
+  --pad: rgba(28, 40, 66, .95); --panel-2: rgba(34, 48, 78, .95); --panel-3: rgba(46, 62, 98, .95);
+}
+[data-theme="williamsburg"][data-style="world"] :is(.cue, .play, .tog:not(.on), .stem, .loop-len, .loop-arrows button, .pad) { background-color: var(--pad); }
