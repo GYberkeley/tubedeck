@@ -823,3 +823,101 @@ vec3 above(vec2 q){
 // The 3D themes replace the band scene: the band is see-through and the world is drawn once.
 const WORLD_THEMES = new Set(Object.keys(WORLDS));
 for (const name of WORLD_THEMES) { delete SCENES[name]; UNDER_SCENES[name] = WORLDS[name]; }
+
+// The reef under the Waterfall theme's falls: sunlit shallow water over a coral bed.
+// Brain, table and branching corals in natural colours, caustics dancing across them,
+// god rays from the surface, a school of orange anthias, a few larger reef fish, sea
+// grass swaying, bubbles, and blue depth haze.
+UNDER_SCENES.waterfall = WORLD(`
+vec3 coralId;
+float caustic(vec2 x){
+  vec2 p = x * 1.6; float c = 0.;
+  for (int i = 0; i < 3; i++) { p = M2 * p * 1.4 + vec2(t * .25, -t * .2); c += abs(sin(p.x + sin(p.y + t * .4)) * sin(p.y + sin(p.x - t * .3))); }
+  return pow(1. - c / 3., 6.) * 3.;
+}
+float heads(vec2 x){
+  vec2 i = floor(x), f = fract(x); float h = 0.;
+  for (int j = -1; j <= 1; j++) for (int k = -1; k <= 1; k++) {
+    vec2 g = vec2(float(k), float(j)), c = i + g, d = g + vec2(hash(c), hash(c + 7.)) * .8 - f;
+    float r = .45 + .3 * hash(c + 3.), kind = hash(c + 19.), dome;
+    if (kind < .2) dome = .5 * r * smoothstep(0., .12, r - length(d)) * (1. - .3 * smoothstep(.5, 1., length(d) / r));   // table coral
+    else dome = sqrt(max(r * r - dot(d, d), 0.)) * (.5 + 1.1 * hash(c + 11.)) * (.75 + .45 * noise(x * 2.3 + c));
+    dome *= .55 + .7 * hash(c + 31.);
+    if (dome > h) { h = dome; coralId = vec3(kind, hash(c + 23.), hash(c + 29.)); }
+  }
+  return h;
+}
+float bed(vec2 x){
+  float h = .5 * fbm(x * .2) - .2 + heads(x / .8) * .75;
+  float k = coralId.x;
+  // surface detail: brain grooves, branching nubs, polyp bumps
+  float det = k < .25 ? .03 * noise(x * 12.) : k < .5 ? .1 * pow(noise(x * 9.), 2.) : k < .75 ? .05 * abs(sin(x.x * 18. + 6. * noise(x * 3.))) : .07 * noise(x * 16.);
+  return h + det * step(.05, h);
+}
+float mapR(vec3 p){ return (p.y - bed(p.xz)) * .45; }
+${sdfKit('mapR', 140, 0)}
+vec3 water(vec3 rd){
+  vec3 c = mix(vec3(.01, .16, .36), vec3(.05, .45, .72), smoothstep(-.3, .5, rd.y));
+  return c + vec3(.6, .9, 1.) * pow(max(dot(rd, normalize(vec3(.2, 1., .6))), 0.), 12.) * .6;
+}
+vec3 coralCol(vec3 id){
+  float h = id.y * 7.;
+  vec3 c = h < 1. ? vec3(1., .38, .12) : h < 2. ? vec3(.62, .3, .82) : h < 3. ? vec3(.7, .72, .15) : h < 4. ? vec3(1., .45, .55)
+         : h < 5. ? vec3(.35, .65, .55) : h < 6. ? vec3(.9, .72, .4) : vec3(.95, .2, .25);
+  return c * (.75 + .35 * id.z);
+}
+vec3 fish(vec2 p, vec3 col){
+  for (int i = 0; i < 34; i++) {                         // school of orange anthias
+    float fi = float(i), sp = .025 + .01 * hash(vec2(fi, 1.));
+    vec2 c = vec2(mod(t * sp + hash(vec2(fi, 2.)) * 3., 3.2) - 1.6, -.14 + .3 * hash(vec2(fi, 3.)) + .02 * sin(t * .7 + fi));
+    c += .03 * vec2(sin(t * .3 + fi), cos(t * .4 + fi * 1.7));
+    float s = .009 + .008 * hash(vec2(fi, 4.));
+    vec2 q = (p - c) / s; q.y += .15 * sin(q.x * 2. + t * 8. + fi);
+    float body = length(q * vec2(.55, 1.)) - 1.;
+    float tail = max(abs(q.y) - (-q.x - 1.5) * .8, max(q.x + 1.6, -q.x - 2.6));
+    float d = min(body, tail);
+    vec3 fc = mix(vec3(1., .45, .12), vec3(1., .7, .25), smoothstep(.6, -.6, q.y)) * (.8 + .4 * smoothstep(1., -1., q.y));
+    col = mix(col, fc, smoothstep(.15, -.15, d) * (.75 + .25 * smoothstep(.6, -.2, p.y)));
+  }
+  for (int i = 0; i < 4; i++) {                          // a few larger reef fish
+    float fi = float(i), dir = mod(fi, 2.) < .5 ? 1. : -1.;
+    vec2 c = vec2(mod(t * .02 * dir + fi * .9, 3.6) - 1.8, -.2 + .09 * fi + .02 * sin(t * .5 + fi));
+    float s = .03 + .01 * hash(vec2(fi, 6.));
+    vec2 q = (p - c) / s; q.x *= dir; q.y += .08 * sin(q.x * 1.5 + t * 4.);
+    float body = length(q * vec2(.7, 1.)) - 1.;
+    float tail = max(abs(q.y) - (-q.x - 1.2) * .7, max(q.x + 1.3, -q.x - 2.1));
+    float d = min(body, tail), k = hash(vec2(fi, 9.));
+    vec3 a = k < .33 ? vec3(1., .85, .1) : k < .66 ? vec3(.15, .35, .9) : vec3(.95, .95, .9);
+    vec3 fc = mix(a, vec3(.08), step(.5, fract(q.x * (k < .66 ? 1.2 : 2.)))  * (k > .33 ? .9 : .5));
+    fc = mix(fc, vec3(1., .85, .1), step(q.x, -1.2) * step(.66, k));
+    col = mix(col, fc * (.85 + .3 * smoothstep(1., -1., q.y)), smoothstep(.12, -.12, d));
+  }
+  return col;
+}`, `
+  vec3 ro = vec3(.3 * sin(t * .02), 2.6, 0.);
+  vec3 rd = normalize(vec3(p.x, p.y + .12, 1.4));
+  rd.yz = rot(-.16) * rd.yz;
+  float d = march_mapR(ro, rd, 40.);
+  vec3 fogc = water(rd);
+  if (d < 40.) {
+    vec3 q = ro + rd * d, n = normal_mapR(q, .004 + .001 * d);
+    bed(q.xz); vec3 id = coralId;
+    vec3 m = q.y < .05 ? mix(vec3(.85, .8, .65), vec3(.7, .65, .5), noise(q.xz * 3.)) : coralCol(id);
+    m *= .75 + .4 * noise(q.xz * 20.);
+    float sun = max(dot(n, normalize(vec3(.2, 1., .3))), 0.);
+    vec3 lin = sun * vec3(.9, 1., .95) * (.6 + caustic(q.xz) * .8) + vec3(.1, .25, .35) * (.5 + .5 * n.y);
+    col = m * m * lin * ao_mapR(q, n) * 2.2;
+    col = mix(col, fogc * .9, 1. - exp(-max(d - 2., 0.) * .1));
+    // sea grass swaying in the foreground
+  } else col = fogc;
+  float rays = 0.;
+  for (int i = 0; i < 5; i++) rays += smoothstep(.6, 1., noise(vec2((p.x + p.y * .35) * (6. + float(i)) + float(i) * 7., t * .15)));
+  col += vec3(.5, .8, 1.) * rays * .06 * smoothstep(-.5, .5, p.y);
+  col = fish(p, col);
+  for (int i = 0; i < 10; i++) {
+    float fi = float(i), bx = hash(vec2(fi, 3.)) * 1.8 - .9 + .01 * sin(t * 2. + fi);
+    float by = mod(t * (.04 + .03 * hash(vec2(fi, 4.))) + hash(vec2(fi, 5.)), 1.2) - .6;
+    float r = .003 + .004 * hash(vec2(fi, 6.)), dd = length(p - vec2(bx, by));
+    col += vec3(.7, .9, 1.) * (smoothstep(r, r * .6, abs(dd - r * .7)) * .5 + smoothstep(r * .4, 0., length(p - vec2(bx - r * .3, by + r * .3))) * .6);
+  }
+`);
