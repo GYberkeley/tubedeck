@@ -34,6 +34,7 @@
     <option value="wulong">WULONG KARST</option>
     <option value="chongqing">CHONGQING</option>
     <option value="timessquare">TIMES SQUARE</option>
+    <option value="williamsburg">WILLIAMSBURG</option>
     <option value="aurora">AURORA</option>
   </select>
   <div id="helperStatus" class="pill">connecting…</div>
@@ -217,6 +218,19 @@
         <li>Restrict it to YouTube Data API v3.</li>
       </ol>
     </details>
+    <fieldset class="midi-box">
+      <legend>DJ controller</legend>
+      <p id="midiStatus" class="hint">Not connected.</p>
+      <div class="midi-actions">
+        <button id="midiConnect" type="button" class="btn">Connect controller</button>
+        <button id="midiLearn" type="button" class="btn">MIDI learn</button>
+        <button id="midiClear" type="button" class="btn">Clear learned</button>
+      </div>
+      <pre id="midiMonitor" class="midi-monitor" aria-live="off"></pre>
+      <p class="hint">Works in Chrome or Edge on the computer the helper runs on, at http://localhost:8765. The DDJ-FLX4 and
+        DDJ-1000 are mapped out of the box; for any other controller use MIDI learn: click a control on screen, then move or
+        press it on the controller. iPad browsers can't use MIDI.</p>
+    </fieldset>
     <div class="dialog-actions">
       <button id="saveSettings" value="save" class="btn primary">Save</button>
       <button id="cancelSettings" type="button" class="btn">Cancel</button>
@@ -229,5 +243,6 @@
 <script src="scenes.js"></script>
 <script src="worlds.js"></script>
 <script src="app.js"></script>
+<script src="midi.js"></script>
 </body>
 </html>
