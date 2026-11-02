@@ -443,6 +443,14 @@ class BrowserSmoke(unittest.TestCase):
         pg.evaluate("rx(0x9F, 0x30, 0x7F); rx(0x9F, 0x30, 0)")
         self.assertTrue(pg.evaluate("decks.B.slip"))
         pg.evaluate("localStorage.removeItem('tubedeck.midiMap')")
+        # Headphone CUE (0x54) and split-cue routing: master left, headphones right.
+        pg.evaluate("midi.preset = PRESETS[0]; rx(0x90, 0x54, 0x7F)")
+        self.assertTrue(pg.evaluate("decks.A.cueOn"))
+        self.assertTrue(pg.evaluate("document.querySelector('.channel[data-ch=A] .pfl').classList.contains('on')"))
+        pg.evaluate("phones.mode = 'split'; phones.route()")
+        pg.wait_for_timeout(200)
+        self.assertEqual(pg.evaluate("ctx.destination.channelCount"), 2)
+        pg.evaluate("phones.mode = 'off'; phones.route()")
         self.assertEqual(errors, [])
         pg.close()
 

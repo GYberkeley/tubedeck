@@ -125,6 +125,7 @@ const midi = {
       case 0x13: case 0x53: press(() => d.resizeLoop(2)); return 'loop ×2';
       case 0x1A: press(() => d.ui.mt.click()); return 'key lock';
       case 0x68: press(() => d.ui.quant.click()); return 'quantize';
+      case 0x54: press(() => phones.toggleCue(d.letter)); return 'headphone cue';
       default:
         if (n in MODE_BUTTONS) { press(() => this.setMode(d, MODE_BUTTONS[n])); return `pad mode ${MODE_BUTTONS[n]}`; }
         return '';
@@ -171,6 +172,8 @@ const midi = {
     }
     if (n === 0x1F || n === 0x3F) { this.fine('xf', n, v, f => this.fader($('#xfader'), f)); return 'crossfader'; }
     if (n === 0x08 || n === 0x28) { this.fine('master', n, v, f => this.knob(knobs.master, f)); return 'master'; }
+    if (n === 0x0C || n === 0x2C) { this.fine('hpmix', n, v, f => this.knob(phones.mixKnob, f)); return 'headphones mix'; }
+    if (n === 0x0D || n === 0x2D) { this.fine('hplvl', n, v, f => this.knob(phones.levelKnob, f)); return 'headphones level'; }
     if (n === 0x40) { this.browse(v > 64 ? v - 128 : v); return 'browse'; }
     return '';
   },
@@ -220,6 +223,7 @@ const midi = {
       set(0x90 + ch, 0x0B, loaded && !d.el.paused);
       set(0x90 + ch, 0x0C, loaded && d.el.paused);
       set(0x90 + ch, 0x58, d.synced);
+      set(0x90 + ch, 0x54, !!d.cueOn);
       set(0x90 + ch, 0x10, !!d.loop || d.manualIn != null);
       set(0x90 + ch, 0x11, !!d.loop);
       set(0x90 + ch, 0x4D, !!d.loop);
