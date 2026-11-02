@@ -9,6 +9,77 @@ A small helper runs on your computer. It serves the app, searches YouTube, and d
 - 8 hot cues and beat loops from ½ to 32 beats
 - mixer with 3-band EQ, filter, channel faders with meters, equal-power crossfader
 
+## Screenshots
+
+![tubedeck with the Classic theme, a track playing on deck 1](docs/screenshots/classic.jpg)
+
+Every theme, with a track playing on deck 1. The scene themes are live 3D scenes that move with the music.
+
+<details>
+<summary>Show all 16 themes</summary>
+
+**Forest**
+
+![Forest theme](docs/screenshots/forest.jpg)
+
+**Waterfall (with the reef below)**
+
+![Waterfall (with the reef below) theme](docs/screenshots/waterfall.jpg)
+
+**Meadow**
+
+![Meadow theme](docs/screenshots/meadow.jpg)
+
+**Ocean**
+
+![Ocean theme](docs/screenshots/ocean.jpg)
+
+**Desert**
+
+![Desert theme](docs/screenshots/desert.jpg)
+
+**Snowy Mountain**
+
+![Snowy Mountain theme](docs/screenshots/snow.jpg)
+
+**ISS / Orbit**
+
+![ISS / Orbit theme](docs/screenshots/space.jpg)
+
+**Rainforest**
+
+![Rainforest theme](docs/screenshots/rainforest.jpg)
+
+**Switzerland**
+
+![Switzerland theme](docs/screenshots/alps.jpg)
+
+**Hakone**
+
+![Hakone theme](docs/screenshots/hakone.jpg)
+
+**Wulong Karst**
+
+![Wulong Karst theme](docs/screenshots/wulong.jpg)
+
+**Chongqing**
+
+![Chongqing theme](docs/screenshots/chongqing.jpg)
+
+**Times Square**
+
+![Times Square theme](docs/screenshots/timessquare.jpg)
+
+**Williamsburg**
+
+![Williamsburg theme](docs/screenshots/williamsburg.jpg)
+
+**Aurora**
+
+![Aurora theme](docs/screenshots/aurora.jpg)
+
+</details>
+
 ## Run it
 
 Needs Python 3.10+ and an up-to-date yt-dlp (`python3 -m pip install -U yt-dlp`).
