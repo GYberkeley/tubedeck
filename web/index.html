@@ -196,6 +196,7 @@
     <div class="meter"><div class="meter-fill"></div></div>
     <input class="chfader" type="range" min="0" max="1" step="0.01" value="1" aria-label="Channel fader">
   </div>
+  <button class="pfl" type="button" title="Cue this deck in the headphones" aria-label="Headphone cue">CUE</button>
   <div class="ch-label"></div>
 </template>
 
@@ -218,6 +219,30 @@
         <li>Restrict it to YouTube Data API v3.</li>
       </ol>
     </details>
+    <fieldset class="midi-box">
+      <legend>Headphones</legend>
+      <label>Headphone mode
+        <select id="phonesMode">
+          <option value="off">Off (one output)</option>
+          <option value="split">Split cue (one pair of headphones)</option>
+          <option value="quad">DJ controller sound card (4 outputs)</option>
+          <option value="separate">Separate headphone device</option>
+        </select>
+      </label>
+      <p id="phonesHint" class="hint"></p>
+      <label class="phones-device">Main output
+        <select id="phonesMain"></select>
+      </label>
+      <label id="phonesHpRow" class="phones-device">Headphone output
+        <select id="phonesDevice"></select>
+      </label>
+      <button id="phonesNames" type="button" class="btn" hidden>Show device names</button>
+      <div class="phones-knobs">
+        <div class="kn"><div class="knob" data-role="phones-mix" data-min="0" data-max="1" data-value="0" data-default="0.5"></div><span>CUE ↔ MASTER</span></div>
+        <div class="kn"><div class="knob" data-role="phones-level" data-min="0" data-max="1" data-value="0.8" data-default="0.8"></div><span>PHONES LEVEL</span></div>
+      </div>
+      <p id="phonesStatus" class="hint warn"></p>
+    </fieldset>
     <fieldset class="midi-box">
       <legend>DJ controller</legend>
       <p id="midiStatus" class="hint">Not connected.</p>

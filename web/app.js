@@ -47,7 +47,8 @@ const beatLabel = b => b >= 1 ? String(b) : `1/${Math.round(1 / b)}`;
 
 // ---------- audio context ----------
 // Graph: deck chains -> mixBus -> master -> speakers; FX returns -> master.
-let ctx, master, mixBus, masterDry;
+// Each deck also has a pre-fader cue send into cueBus for the headphones (phones, below).
+let ctx, master, mixBus, masterDry, cueBus;
 function audio() {
   if (!ctx) {
     ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -55,7 +56,8 @@ function audio() {
     master.gain.value = knobs.master ? knobs.master.value : 0.85;
     mixBus = ctx.createGain(); masterDry = ctx.createGain();
     mixBus.connect(masterDry).connect(master);
-    master.connect(ctx.destination);
+    cueBus = ctx.createGain();
+    phones.route();
     try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
     fx.forEach(u => u.connect());
   }
@@ -527,10 +529,13 @@ class Deck {
     const ch = c.createGain(), xf = c.createGain(), dry = c.createGain(), meter = c.createAnalyser();
     meter.fftSize = 1024;
     src.connect(trim).connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
-    const cfx = buildColorFx(c, hpf, ch);
+    const pre = c.createGain(), cue = c.createGain();      // pre-fader: what CUE sends to the headphones
+    const cfx = buildColorFx(c, hpf, pre);
+    pre.connect(ch); pre.connect(cue).connect(cueBus);
+    cue.gain.value = this.cueOn ? 1 : 0;
     ch.connect(xf).connect(dry).connect(mixBus);
     ch.connect(meter);
-    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, meter, buf: new Float32Array(1024) };
+    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, cue, meter, buf: new Float32Array(1024) };
     mixer.apply();
     fx.forEach(u => u.route());
   }
@@ -1283,6 +1288,8 @@ const mixer = {
       const ui = this.channels[L] = { root, fill: $('.meter-fill', root), fader: $('.chfader', root), knobs: {} };
       $$('.knob', root).forEach(k => { ui.knobs[k.dataset.role] = new Knob(k, () => this.apply()); });
       ui.fader.addEventListener('input', () => this.apply());
+      ui.cue = $('.pfl', root);
+      ui.cue.addEventListener('click', () => phones.toggleCue(L));
     }
     knobs.master = new Knob($('.knob[data-role=master]'), v => { if (master) master.gain.setTargetAtTime(v, ctx.currentTime, 0.01); });
     $('#xfader').addEventListener('input', () => this.apply());
@@ -1318,6 +1325,137 @@ const mixer = {
     }
   },
   meter(L, v) { this.channels[L].fill.style.height = (v * 100).toFixed(1) + '%'; },
+};
+
+// ---------- headphones ----------
+// CUE sends a deck (pre-fader) to the headphones, blended with the master by MIX. Modes:
+//   off      - everything to one output, as before
+//   split    - one stereo output: master in the left ear, the headphone mix in the right
+//   quad     - a 4-output sound card (DJ controllers): master on 1-2, headphones on 3-4
+//   separate - a second device for the headphones (Chrome); arrives a little late
+const phones = {
+  mode: store.get('phonesMode') || 'off', mix: +(store.get('phonesMix') || 0), level: +(store.get('phonesLevel') || 0.8),
+  mainId: store.get('phonesMain') || '', hpId: store.get('phonesDevice') || '', nodes: [], el: null, gen: 0,
+  toggleCue(L) {
+    const d = decks[L]; d.cueOn = !d.cueOn;
+    mixer.channels[L].cue.classList.toggle('on', d.cueOn);
+    if (d.chain) d.chain.cue.gain.setTargetAtTime(d.cueOn ? 1 : 0, ctx.currentTime, 0.01);
+  },
+  setMix(v) { this.mix = clamp(v, 0, 1); store.set('phonesMix', String(this.mix)); this.applyLevels(); },
+  applyLevels() {
+    if (!this.cueGain) return;
+    const p = this.mix * Math.PI / 2, now = ctx.currentTime;
+    this.cueGain.gain.setTargetAtTime(Math.cos(p) * this.level, now, 0.01);
+    this.mstGain.gain.setTargetAtTime(Math.sin(p) * this.level, now, 0.01);
+  },
+  // Rebuilds the output routing. Calls can overlap (a mode change and a device change both
+  // reroute, and switching devices awaits), so only the newest call builds: each await is
+  // followed by a generation check, and the graph itself is built synchronously.
+  async route() {
+    if (!ctx) return;
+    const gen = ++this.gen;
+    if (ctx.setSinkId && (ctx.sinkId || '') !== this.mainId) {
+      await ctx.setSinkId(this.mainId).catch(() => this.status('That output device is not available.'));
+      if (gen !== this.gen) return;
+    }
+    this.teardown();
+    const keep = n => (this.nodes.push(n), n), dest = ctx.destination;
+    // The headphone feed: cue bus and master, blended by MIX.
+    const hp = keep(ctx.createGain());
+    this.cueGain = keep(ctx.createGain()); this.mstGain = keep(ctx.createGain());
+    cueBus.connect(this.cueGain).connect(hp); master.connect(this.mstGain).connect(hp);
+    this.nodes.push(cueBus);
+    this.applyLevels();
+    let mode = this.mode, note = '';
+    // Without the 4 outputs, fall back to one output rather than split cue: split would put
+    // the cued deck in one of the speakers for the whole room to hear.
+    if (mode === 'quad' && dest.maxChannelCount < 4) {
+      note = `This output has ${dest.maxChannelCount} channels; headphones need a 4-output sound card, so everything plays through one output.`;
+      mode = 'off';
+    }
+    const sepOk = !!(window.HTMLMediaElement && HTMLMediaElement.prototype.setSinkId) && this.hpId && this.hpId !== this.mainId;
+    if (mode === 'separate' && !sepOk) { note = 'Choose a headphone output that is different from the main output.'; mode = 'off'; }
+    if (mode === 'quad') {
+      Object.assign(dest, { channelCount: 4, channelCountMode: 'explicit', channelInterpretation: 'discrete' });
+      const m = keep(ctx.createChannelMerger(4)), sm = keep(ctx.createChannelSplitter(2)), sh = keep(ctx.createChannelSplitter(2));
+      master.connect(sm); hp.connect(sh);
+      sm.connect(m, 0, 0); sm.connect(m, 1, 1); sh.connect(m, 0, 2); sh.connect(m, 1, 3);
+      m.connect(dest);
+    } else {
+      Object.assign(dest, { channelCount: 2, channelCountMode: 'explicit', channelInterpretation: 'speakers' });
+      if (mode === 'split') {
+        const mono = () => keep(Object.assign(ctx.createGain(), { channelCount: 1, channelCountMode: 'explicit', channelInterpretation: 'speakers' }));
+        const m = keep(ctx.createChannelMerger(2)), ml = mono(), hr = mono();
+        master.connect(ml).connect(m, 0, 0); hp.connect(hr).connect(m, 0, 1);
+        m.connect(dest);
+      } else master.connect(dest);
+    }
+    this.status(note);
+    if (mode !== 'separate') return;
+    // Separate headphones: the feed plays only once it is on its own device, never the
+    // default (which is usually the speakers).
+    const out = keep(ctx.createMediaStreamDestination());
+    hp.connect(out);
+    const el = this.el = new Audio(); el.srcObject = out.stream;
+    try { await el.setSinkId(this.hpId); } catch {
+      if (this.el === el) { this.el = null; el.srcObject = null; }
+      if (gen === this.gen) this.status('That headphone device is not available.');
+      return;
+    }
+    if (gen !== this.gen || this.el !== el) { el.srcObject = null; return; }
+    el.play().catch(() => this.status('Tap anywhere to start the headphone output.'));
+  },
+  teardown() {
+    for (const n of this.nodes) { try { n.disconnect(); } catch {} }
+    try { master.disconnect(); } catch {}
+    this.nodes = [];
+    if (this.el) { this.el.pause(); this.el.srcObject = null; this.el = null; }
+  },
+  status(msg) { const el = $('#phonesStatus'); if (el) el.textContent = msg; },
+  // Output names need permission to use audio devices; Chrome asks once.
+  async listDevices(ask) {
+    if (!navigator.mediaDevices?.enumerateDevices) return [];
+    if (ask) { try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(t => t.stop()); } catch {} }
+    return (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audiooutput');
+  },
+  async fillDevices(ask) {
+    const outs = await this.listDevices(ask);
+    for (const [sel, cur] of [[$('#phonesMain'), this.mainId], [$('#phonesDevice'), this.hpId]]) {
+      sel.innerHTML = '<option value="">System default</option>' + outs.filter(d => d.deviceId && d.deviceId !== 'default')
+        .map(d => `<option value="${escapeHtml(d.deviceId)}">${escapeHtml(d.label || 'Output device')}</option>`).join('');
+      sel.value = cur;
+    }
+    const named = outs.some(d => d.label);
+    $('#phonesNames').hidden = named || !navigator.mediaDevices;
+    // A 4-output DJ sound card is the natural choice for both.
+    if (!this.mainId && this.mode === 'quad') {
+      const dj = outs.find(d => /DDJ|FLX|Pioneer|controller|Traktor|Numark|Hercules/i.test(d.label));
+      if (dj) { this.mainId = dj.deviceId; $('#phonesMain').value = dj.deviceId; store.set('phonesMain', this.mainId); this.route(); }
+    }
+  },
+  init() {
+    const canPick = !!(window.AudioContext && AudioContext.prototype.setSinkId);
+    $('#phonesMode').value = this.mode;
+    $$('.phones-device').forEach(el => { el.hidden = !canPick; });
+    const sync = () => {
+      $('#phonesHpRow').hidden = this.mode !== 'separate' || !canPick;
+      $('#phonesHint').textContent = {
+        off: 'Everything plays through one output. CUE does nothing.',
+        split: 'Master in your left ear, the cued deck (blended by MIX) in your right. Works with any headphones, including on iPad.',
+        quad: 'For a DJ controller with a built-in sound card (DDJ-FLX4, DDJ-1000): speakers on outputs 1-2, headphones on 3-4. Chrome or Edge.',
+        separate: 'Speakers on one device, headphones on another. The headphones run slightly late, so beatmatch by the master. Chrome or Edge.',
+      }[this.mode];
+    };
+    $('#phonesMode').addEventListener('change', e => { this.mode = e.target.value; store.set('phonesMode', this.mode); sync(); this.route(); if (canPick) this.fillDevices(); });
+    $('#phonesMain').addEventListener('change', e => { this.mainId = e.target.value; store.set('phonesMain', this.mainId); this.route(); });
+    $('#phonesDevice').addEventListener('change', e => { this.hpId = e.target.value; store.set('phonesDevice', this.hpId); this.route(); });
+    $('#phonesNames').addEventListener('click', () => this.fillDevices(true));
+    this.mixKnob = new Knob($('.knob[data-role=phones-mix]'), v => this.setMix(v));
+    this.levelKnob = new Knob($('.knob[data-role=phones-level]'), v => { this.level = v; store.set('phonesLevel', String(v)); this.applyLevels(); });
+    this.mixKnob.set(this.mix); this.levelKnob.set(this.level);
+    sync();
+    if (canPick) this.fillDevices();
+  },
 };
 
 // ---------- browser: search, library, queue ----------
@@ -1509,6 +1647,7 @@ $('#fxToggle').addEventListener('click', e => {
   $('#fxbar').classList.toggle('hidden', !on);
 });
 mixer.init();
+phones.init();
 decks.A = new Deck('A');
 decks.B = new Deck('B');
 applyTheme(store.get('theme') || 'classic');

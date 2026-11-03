@@ -282,3 +282,13 @@ body.midi-learning [data-learnable] { outline: 1px dashed #ffcf6b88; outline-off
 body.midi-learning .midi-target { outline: 2px solid #ffcf6b !important; outline-offset: 2px; }
 .midi-learn-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; background: #1d1a10; border: 1px solid #ffcf6b; color: #ffe7a8; padding: 8px 14px; border-radius: 8px; font-size: 13px; display: flex; gap: 12px; align-items: center; }
 #list li.midi-sel { box-shadow: inset 3px 0 0 #ffcf6b; background: rgba(255, 207, 107, .08); }
+
+/* Headphone cue */
+.pfl { margin-top: 4px; padding: 3px 8px; font-size: 10px; font-weight: 800; letter-spacing: .5px; border-radius: 4px;
+  background: var(--pad, #222); color: var(--muted); border: 1px solid var(--line-soft, #333); }
+.pfl.on { background: #e6a817; color: #111; border-color: transparent; box-shadow: 0 0 8px #e6a81766; }
+.phones-knobs { display: flex; gap: 24px; margin: 8px 0 2px; }
+.phones-knobs .kn { display: flex; flex-direction: column; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; color: var(--muted); }
+.phones-knobs .knob { width: 40px; height: 40px; }
+.hint.warn { color: #e6a817; }
+#settings [hidden] { display: none !important; }
