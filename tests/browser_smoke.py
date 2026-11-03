@@ -499,6 +499,38 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_drop_local_file(self):
+        """An MP3 dropped on a deck loads, plays and gets a BPM without the helper; non-audio is refused."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        # Build a real File from the fixture MP3 and drop it on deck 2, as the browser would.
+        pg.evaluate("""async () => {
+            let st = await api('/api/fetch?id=kickTrack01&now=1', { method: 'POST' });
+            while (st.state !== 'ready') { await new Promise(r => setTimeout(r, 300)); st = await api('/api/status?id=kickTrack01'); }
+            const bytes = await (await fetch(audioUrl('kickTrack01'))).arrayBuffer();
+            const dt = new DataTransfer();
+            dt.items.add(new File([bytes], 'DJ Test - Kick Loop.mp3', { type: 'audio/mpeg' }));
+            const deck = document.querySelector('.deck[data-deck=B] .jog-ring');
+            for (const type of ['dragenter', 'dragover', 'drop'])
+                deck.dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt }));
+        }""")
+        pg.wait_for_function("decks.B.bpm > 0", timeout=30000)
+        self.assertEqual(pg.evaluate("decks.B.ui.title.textContent"), "Kick Loop")
+        self.assertEqual(pg.evaluate("decks.B.ui.artist.textContent"), "DJ Test")
+        self.assertIsNone(pg.evaluate("decks.A.track"))
+        self.assertFalse(pg.evaluate("document.body.classList.contains('dropping')"))
+        pg.dispatch_event(".deck[data-deck=B] .play", "pointerdown")
+        pg.wait_for_function("decks.B.el.currentTime > 0.3")
+        # Open file with a text file is refused without touching the decks.
+        pg.set_input_files("#fileInput", files=[{"name": "notes.txt", "mimeType": "text/plain", "buffer": b"hello"}])
+        self.assertIsNone(pg.evaluate("decks.A.track"))
+        self.assertIn("not audio", pg.evaluate("document.querySelector('#queueInfo').textContent"))
+        self.assertEqual(errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")

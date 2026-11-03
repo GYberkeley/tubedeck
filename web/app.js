@@ -633,11 +633,13 @@ class Deck {
     }
     this.setState('Loading audio…');
     try {
-      const bytes = await (await fetch(audioUrl(meta.id))).arrayBuffer();
+      // A dropped or opened file is read straight from disk; everything else comes from the helper.
+      const bytes = meta.file ? await meta.file.arrayBuffer() : await (await fetch(audioUrl(meta.id))).arrayBuffer();
       if (this.track !== meta) return;
       this.setState('Decoding…');
-      const buf = await new Promise((ok, bad) => audio().decodeAudioData(bytes, ok, bad));
+      const buf = await decodeAudio(bytes);
       if (this.track !== meta) return;
+      if (buf.duration > MAX_TRACK_SECONDS) { this.setState(`Tracks over ${MAX_TRACK_SECONDS / 60} minutes are too long to load into the deck yet.`); return; }
       this.setState('Analyzing…');
       const { msg, transfer } = analyzer.channels(buf);
       const r = await analyzer.run({ type: 'analyze', ...msg }, transfer);
@@ -650,10 +652,11 @@ class Deck {
       if (!masterDeck() || masterDeck() === this) this.makeMaster();
       if (this.synced) this.sync();
       this.notifyFollowers();
-      this.fetchStems(meta);
+      if (meta.file) this.renderStems('Stems need a track from the helper');
+      else this.fetchStems(meta);
     } catch (e) {
       if (this.track !== meta) return;
-      this.setState('Could not load this track: ' + (e.message || e));
+      this.setState(meta.file && e.name === 'EncodingError' ? "This browser can't decode that file. Try MP3, WAV, AAC/M4A or FLAC." : 'Could not load this track: ' + (e.message || e));
     }
   }
 
@@ -673,7 +676,7 @@ class Deck {
       const stems = [], refs = [];
       for (const name of STEM_NAMES) {
         const bytes = await (await fetch(stemUrl(meta.id, name))).arrayBuffer();
-        const buf = await new Promise((ok, bad) => audio().decodeAudioData(bytes, ok, bad));
+        const buf = await decodeAudio(bytes);
         if (this.track !== meta) return;
         const { msg, transfer } = analyzer.channels(buf);
         const r = await analyzer.run({ type: 'pcm', ...msg }, transfer);
@@ -1593,6 +1596,54 @@ async function loadOnDeck(L, meta) {
     d.load({ ...meta, ...st });
   } catch (e) { d.setState(e.message); }
 }
+
+// decodeAudioData both calls back and (in current browsers) returns a promise; handling only
+// the callbacks leaves the promise's rejection unhandled, so wrap it once here.
+function decodeAudio(bytes) {
+  return new Promise((ok, bad) => {
+    const p = audio().decodeAudioData(bytes, ok, bad);
+    if (p && p.catch) p.catch(bad);
+  });
+}
+
+// ---------- local files ----------
+// Drop audio files on a deck (or anywhere: the first empty deck gets it), or use Open file.
+const AUDIO_EXT = /\.(mp3|wav|wave|m4a|aac|mp4|flac|ogg|oga|opus|aif|aiff|webm)$/i;
+const isAudioFile = f => (f.type || '').startsWith('audio/') || AUDIO_EXT.test(f.name);
+function loadFile(L, file) {
+  const base = file.name.replace(/\.[^.]+$/, '');
+  const dash = base.indexOf(' - ');                       // "Artist - Title"
+  const meta = { id: `file:${file.name}:${file.size}:${file.lastModified}`, file,
+    title: dash > 0 ? base.slice(dash + 3) : base, channel: dash > 0 ? base.slice(0, dash) : 'Local file' };
+  decks[L].pending = meta.id;
+  decks[L].load(meta);
+}
+function loadFiles(files, L) {
+  const audioFiles = [...files].filter(isAudioFile);
+  if (!audioFiles.length) return flash(files.length ? 'That file is not audio. Drop an MP3, WAV, M4A or FLAC.' : '');
+  // The deck under the drop first, then the other one; otherwise an empty deck, then deck 1.
+  const order = L ? [L, L === 'A' ? 'B' : 'A'] : ['A', 'B'].sort((a, b) => !!decks[a].track - !!decks[b].track);
+  audioFiles.slice(0, 2).forEach((f, i) => loadFile(order[i], f));
+}
+let dragDepth = 0;
+const deckUnder = e => e.target.closest?.('.deck')?.dataset.deck || e.target.closest?.('.channel')?.dataset.ch;
+const hasFiles = e => [...(e.dataTransfer?.types || [])].includes('Files');
+window.addEventListener('dragenter', e => { if (!hasFiles(e)) return; dragDepth++; document.body.classList.add('dropping'); });
+window.addEventListener('dragleave', e => { if (!hasFiles(e)) return; if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dropping'); } });
+window.addEventListener('dragover', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+  const L = deckUnder(e);
+  $$('.deck').forEach(d => d.classList.toggle('drop-target', d.dataset.deck === L));
+});
+window.addEventListener('drop', e => {
+  if (!hasFiles(e)) return;
+  e.preventDefault(); dragDepth = 0;
+  document.body.classList.remove('dropping'); $$('.deck').forEach(d => d.classList.remove('drop-target'));
+  audio();
+  loadFiles(e.dataTransfer.files, deckUnder(e));
+});
+$('#fileInput').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
 
 async function refreshLibrary() {
   try { library = (await api('/api/library')).tracks; } catch {}
