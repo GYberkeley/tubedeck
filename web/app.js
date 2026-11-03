@@ -1335,7 +1335,7 @@ const mixer = {
 //   separate - a second device for the headphones (Chrome); arrives a little late
 const phones = {
   mode: store.get('phonesMode') || 'off', mix: +(store.get('phonesMix') || 0), level: +(store.get('phonesLevel') || 0.8),
-  mainId: store.get('phonesMain') || '', hpId: store.get('phonesDevice') || '', nodes: [], el: null,
+  mainId: store.get('phonesMain') || '', hpId: store.get('phonesDevice') || '', nodes: [], el: null, gen: 0,
   toggleCue(L) {
     const d = decks[L]; d.cueOn = !d.cueOn;
     mixer.channels[L].cue.classList.toggle('on', d.cueOn);
@@ -1348,22 +1348,33 @@ const phones = {
     this.cueGain.gain.setTargetAtTime(Math.cos(p) * this.level, now, 0.01);
     this.mstGain.gain.setTargetAtTime(Math.sin(p) * this.level, now, 0.01);
   },
+  // Rebuilds the output routing. Calls can overlap (a mode change and a device change both
+  // reroute, and switching devices awaits), so only the newest call builds: each await is
+  // followed by a generation check, and the graph itself is built synchronously.
   async route() {
     if (!ctx) return;
-    for (const n of this.nodes) { try { n.disconnect(); } catch {} }
-    try { master.disconnect(); } catch {}
-    this.nodes = [];
-    if (this.el) { this.el.pause(); this.el.srcObject = null; this.el = null; }
+    const gen = ++this.gen;
+    if (ctx.setSinkId && (ctx.sinkId || '') !== this.mainId) {
+      await ctx.setSinkId(this.mainId).catch(() => this.status('That output device is not available.'));
+      if (gen !== this.gen) return;
+    }
+    this.teardown();
     const keep = n => (this.nodes.push(n), n), dest = ctx.destination;
-    if (ctx.setSinkId && (ctx.sinkId || '') !== this.mainId) await ctx.setSinkId(this.mainId).catch(() => this.status('That output device is not available.'));
     // The headphone feed: cue bus and master, blended by MIX.
     const hp = keep(ctx.createGain());
     this.cueGain = keep(ctx.createGain()); this.mstGain = keep(ctx.createGain());
     cueBus.connect(this.cueGain).connect(hp); master.connect(this.mstGain).connect(hp);
     this.nodes.push(cueBus);
     this.applyLevels();
-    let mode = this.mode;
-    if (mode === 'quad' && dest.maxChannelCount < 4) { this.status(`This output has ${dest.maxChannelCount} channels; headphones need a 4-output sound card. Using split cue instead.`); mode = 'split'; }
+    let mode = this.mode, note = '';
+    // Without the 4 outputs, fall back to one output rather than split cue: split would put
+    // the cued deck in one of the speakers for the whole room to hear.
+    if (mode === 'quad' && dest.maxChannelCount < 4) {
+      note = `This output has ${dest.maxChannelCount} channels; headphones need a 4-output sound card, so everything plays through one output.`;
+      mode = 'off';
+    }
+    const sepOk = !!(window.HTMLMediaElement && HTMLMediaElement.prototype.setSinkId) && this.hpId && this.hpId !== this.mainId;
+    if (mode === 'separate' && !sepOk) { note = 'Choose a headphone output that is different from the main output.'; mode = 'off'; }
     if (mode === 'quad') {
       Object.assign(dest, { channelCount: 4, channelCountMode: 'explicit', channelInterpretation: 'discrete' });
       const m = keep(ctx.createChannelMerger(4)), sm = keep(ctx.createChannelSplitter(2)), sh = keep(ctx.createChannelSplitter(2));
@@ -1378,15 +1389,27 @@ const phones = {
         master.connect(ml).connect(m, 0, 0); hp.connect(hr).connect(m, 0, 1);
         m.connect(dest);
       } else master.connect(dest);
-      if (mode === 'separate') {
-        const out = keep(ctx.createMediaStreamDestination());
-        hp.connect(out);
-        this.el = new Audio(); this.el.srcObject = out.stream;
-        if (this.el.setSinkId) await this.el.setSinkId(this.hpId).catch(() => this.status('That headphone device is not available.'));
-        this.el.play().catch(() => {});
-      }
     }
-    if (mode === this.mode) this.status('');
+    this.status(note);
+    if (mode !== 'separate') return;
+    // Separate headphones: the feed plays only once it is on its own device, never the
+    // default (which is usually the speakers).
+    const out = keep(ctx.createMediaStreamDestination());
+    hp.connect(out);
+    const el = this.el = new Audio(); el.srcObject = out.stream;
+    try { await el.setSinkId(this.hpId); } catch {
+      if (this.el === el) { this.el = null; el.srcObject = null; }
+      if (gen === this.gen) this.status('That headphone device is not available.');
+      return;
+    }
+    if (gen !== this.gen || this.el !== el) { el.srcObject = null; return; }
+    el.play().catch(() => this.status('Tap anywhere to start the headphone output.'));
+  },
+  teardown() {
+    for (const n of this.nodes) { try { n.disconnect(); } catch {} }
+    try { master.disconnect(); } catch {}
+    this.nodes = [];
+    if (this.el) { this.el.pause(); this.el.srcObject = null; this.el = null; }
   },
   status(msg) { const el = $('#phonesStatus'); if (el) el.textContent = msg; },
   // Output names need permission to use audio devices; Chrome asks once.
@@ -1407,7 +1430,7 @@ const phones = {
     // A 4-output DJ sound card is the natural choice for both.
     if (!this.mainId && this.mode === 'quad') {
       const dj = outs.find(d => /DDJ|FLX|Pioneer|controller|Traktor|Numark|Hercules/i.test(d.label));
-      if (dj) { this.mainId = dj.deviceId; $('#phonesMain').value = dj.deviceId; }
+      if (dj) { this.mainId = dj.deviceId; $('#phonesMain').value = dj.deviceId; store.set('phonesMain', this.mainId); this.route(); }
     }
   },
   init() {
@@ -1423,7 +1446,7 @@ const phones = {
         separate: 'Speakers on one device, headphones on another. The headphones run slightly late, so beatmatch by the master. Chrome or Edge.',
       }[this.mode];
     };
-    $('#phonesMode').addEventListener('change', e => { this.mode = e.target.value; store.set('phonesMode', this.mode); sync(); this.fillDevices(); this.route(); });
+    $('#phonesMode').addEventListener('change', e => { this.mode = e.target.value; store.set('phonesMode', this.mode); sync(); this.route(); if (canPick) this.fillDevices(); });
     $('#phonesMain').addEventListener('change', e => { this.mainId = e.target.value; store.set('phonesMain', this.mainId); this.route(); });
     $('#phonesDevice').addEventListener('change', e => { this.hpId = e.target.value; store.set('phonesDevice', this.hpId); this.route(); });
     $('#phonesNames').addEventListener('click', () => this.fillDevices(true));

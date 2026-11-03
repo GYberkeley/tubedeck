@@ -447,9 +447,54 @@ class BrowserSmoke(unittest.TestCase):
         pg.evaluate("midi.preset = PRESETS[0]; rx(0x90, 0x54, 0x7F)")
         self.assertTrue(pg.evaluate("decks.A.cueOn"))
         self.assertTrue(pg.evaluate("document.querySelector('.channel[data-ch=A] .pfl').classList.contains('on')"))
-        pg.evaluate("phones.mode = 'split'; phones.route()")
-        pg.wait_for_timeout(200)
-        self.assertEqual(pg.evaluate("ctx.destination.channelCount"), 2)
+        pg.evaluate("phones.toggleCue('A')")
+        self.assertEqual(errors, [])
+        pg.close()
+
+    def test_headphones(self):
+        """Split cue puts the master in the left ear and the cued deck in the right; routing never doubles or leaks."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0", timeout=30000)
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
+        pg.wait_for_function("!decks.A.el.paused")
+        # Split cue, headphone MIX fully on CUE. Tap the merger's two inputs (left, right).
+        pg.evaluate("phones.mode = 'split'; phones.setMix(0); phones.route()")
+        levels = """() => new Promise(done => {
+            const m = phones.nodes.find(n => n instanceof ChannelMergerNode);
+            const sp = ctx.createChannelSplitter(2), a = [ctx.createAnalyser(), ctx.createAnalyser()];
+            m.connect(sp); sp.connect(a[0], 0); sp.connect(a[1], 1);
+            setTimeout(() => done(a.map(x => { const b = new Float32Array(2048); x.getFloatTimeDomainData(b);
+                let s = 0; for (const v of b) s += v * v; return Math.sqrt(s / b.length); })), 700); })"""
+        # Channel fader down, CUE on: nothing in the left ear (master), the deck in the right (pre-fader cue).
+        pg.evaluate("const f = mixer.channels.A.fader; f.value = 0; f.dispatchEvent(new Event('input')); phones.toggleCue('A')")
+        left, right = pg.evaluate(levels)
+        self.assertLess(left, 0.005, f"master should be silent: {left}")
+        self.assertGreater(right, 0.02, f"cue should be audible: {right}")
+        # Fader up, CUE off: the deck in the left ear only.
+        pg.evaluate("const f = mixer.channels.A.fader; f.value = 1; f.dispatchEvent(new Event('input')); phones.toggleCue('A')")
+        left, right = pg.evaluate(levels)
+        self.assertGreater(left, 0.02, f"master should be audible: {left}")
+        self.assertLess(right, 0.005, f"cue should be silent: {right}")
+        # Overlapping reroutes (device switches await) build exactly one graph.
+        pg.evaluate("""async () => {
+            const real = ctx.setSinkId; phones.mainId = 'slow-device';
+            ctx.setSinkId = () => new Promise(r => setTimeout(r, 80));
+            await Promise.all([phones.route(), phones.route(), phones.route()]);
+            ctx.setSinkId = real; phones.mainId = ''; }""")
+        self.assertEqual(pg.evaluate("phones.nodes.filter(n => n instanceof ChannelMergerNode).length"), 1)
+        # A 4-output mode on a 2-channel output falls back to one output, never split cue.
+        if pg.evaluate("ctx.destination.maxChannelCount") < 4:
+            pg.evaluate("phones.mode = 'quad'; phones.route()")
+            self.assertEqual(pg.evaluate("phones.nodes.filter(n => n instanceof ChannelMergerNode).length"), 0)
+            self.assertIn("one output", pg.evaluate("document.querySelector('#phonesStatus').textContent"))
+        # Separate mode without its own device stays off instead of playing on the default.
+        pg.evaluate("phones.mode = 'separate'; phones.hpId = ''; phones.route()")
+        self.assertIsNone(pg.evaluate("phones.el"))
         pg.evaluate("phones.mode = 'off'; phones.route()")
         self.assertEqual(errors, [])
         pg.close()
