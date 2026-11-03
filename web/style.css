@@ -292,3 +292,10 @@ body.midi-learning .midi-target { outline: 2px solid #ffcf6b !important; outline
 .phones-knobs .knob { width: 40px; height: 40px; }
 .hint.warn { color: #e6a817; }
 #settings [hidden] { display: none !important; }
+
+/* Local files: drop onto a deck, or Open file */
+.open-file { display: inline-flex; align-items: center; padding: 0 12px; height: 32px; border-radius: 6px; background: var(--pad, #222);
+  color: var(--text); font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; border: 1px solid var(--line-soft, #333); }
+.open-file:hover { filter: brightness(1.15); }
+body.dropping .deck { outline: 2px dashed #ffffff33; outline-offset: -6px; }
+body.dropping .deck.drop-target { outline: 2px dashed #ffcf6b; background-color: rgba(255, 207, 107, .06); }
