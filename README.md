@@ -92,6 +92,51 @@ The helper prints a link with a pairing code, for example `http://192.168.1.20:8
 
 Downloaded audio, the pairing code and throttle state live in `~/.tubedeck` (set `TUBEDECK_HOME` to move it, `TUBEDECK_PORT` to change the port).
 
+## Use it on your iPad from anywhere (Tailscale)
+
+The helper is a small web server: the iPad opens a link to it, the page then runs on the iPad, and the helper does the YouTube searching, downloading and stem separation. On the same Wi-Fi the link the helper prints just works. To use it from anywhere, and over HTTPS (which gives the iPad the better audio engine, a home-screen app and a screen that stays on while playing), use [Tailscale](https://tailscale.com), a free private network between your own devices:
+
+1. Install Tailscale on the computer that runs the helper and on the iPad, and sign in to the same account on both.
+2. On the computer, turn on HTTPS for your devices once in the Tailscale admin console (DNS, then HTTPS Certificates), then run:
+   ```bash
+   tailscale serve --bg 8765
+   ```
+   This gives the helper a private HTTPS address like `https://your-mac.your-tailnet.ts.net` that only your own devices can reach. It keeps working across restarts; `tailscale serve reset` turns it off.
+3. Start the helper as usual. It prints the Tailscale link (with the pairing code) next to the Wi-Fi ones.
+4. On the iPad, open that link in Safari. To install it: Share, then Add to Home Screen. The installed app keeps its own storage, so it asks for the pairing code once.
+
+The pairing code is still required on every address, and the helper only answers your own devices. The computer running the helper has to stay on and awake.
+
+### An always-on helper on a Raspberry Pi (optional)
+
+If your Mac is a laptop you carry around, a Raspberry Pi 4 or 5 left plugged in at home can be the helper instead (stems are slow on a Pi, so skip them there):
+
+```bash
+sudo apt install -y python3 python3-pip git ffmpeg
+python3 -m pip install -U --break-system-packages yt-dlp
+git clone https://github.com/GYberkeley/tubedeck.git && cd tubedeck
+python3 server.py
+```
+
+To start it on boot, create `/etc/systemd/system/tubedeck.service`:
+
+```ini
+[Unit]
+Description=tubedeck helper
+After=network-online.target
+
+[Service]
+User=pi
+WorkingDirectory=/home/pi/tubedeck
+ExecStart=/usr/bin/python3 server.py
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then run `sudo systemctl enable --now tubedeck`, install Tailscale on the Pi (`curl -fsSL https://tailscale.com/install.sh | sh`, then `sudo tailscale up`) and run `tailscale serve --bg 8765` there. Update yt-dlp now and then with `python3 -m pip install -U --break-system-packages yt-dlp`, since YouTube changes often. The pairing code is in `~/.tubedeck/token` on the Pi.
+
 ## How YouTube requests are throttled
 
 Every request the helper makes to YouTube, for every person using it, goes through one queue:
