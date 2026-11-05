@@ -166,6 +166,20 @@ class HelperTest(unittest.TestCase):
         self.assertIn(b"tubedeck", body)
         self.assertEqual(headers.get("Cache-Control"), "no-cache")  # updates must reach cached browsers
 
+    def test_home_screen_app_files(self):
+        code, headers, body = self.req("/manifest.webmanifest", token=False)
+        self.assertEqual(code, 200)
+        self.assertEqual(headers.get("Content-type"), "application/manifest+json")   # http.server spells it this way
+        self.assertEqual(json.loads(body)["display"], "fullscreen")
+        self.assertEqual(self.req("/apple-touch-icon.png", token=False)[0], 200)
+
+    def test_tailscale_name(self):
+        status = mock.Mock(stdout=json.dumps({"Self": {"DNSName": "mac.tail1234.ts.net."}}))
+        with mock.patch.object(server.subprocess, "run", return_value=status):
+            self.assertEqual(server.tailscale_name(), "mac.tail1234.ts.net")
+        with mock.patch.object(server.subprocess, "run", side_effect=OSError):
+            self.assertIsNone(server.tailscale_name())   # no Tailscale: the helper starts as before
+
     def test_rejects_bad_video_ids(self):
         for path, method in [("/api/fetch?id=../../etc", "POST"), ("/api/status?id=short", "GET")]:
             self.assertEqual(self.req(path, method)[0], 400)

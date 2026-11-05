@@ -1714,6 +1714,18 @@ waves.init();
   under.draw(now);
   requestAnimationFrame(frame);
 })(performance.now());
+// Keep the screen awake while a deck is playing (secure pages: localhost or HTTPS).
+// The browser drops the lock when the page is hidden, so it is re-taken when needed.
+let wakeLock = null;
+setInterval(async () => {
+  const playing = Object.values(decks).some(d => d.track && !d.el.paused);
+  try {
+    if (playing && !wakeLock && navigator.wakeLock && document.visibilityState === 'visible') {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!playing && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}, 2000);
 const clock = () => { const d = new Date(); $('#clock').textContent = `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`; };
 clock(); setInterval(clock, 10000);
 refreshHelper(); refreshLibrary();

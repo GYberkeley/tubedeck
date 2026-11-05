@@ -421,6 +421,8 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=str(WEB), **kw)
 
+    extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".webmanifest": "application/manifest+json"}
+
     def end_headers(self):
         # Browsers must revalidate the app files, or an update keeps showing the old UI.
         if not self.path.startswith("/api/"):
@@ -570,6 +572,19 @@ def check_ytdlp():
                          "Update it with: python3 -m pip install -U yt-dlp")
 
 
+def tailscale_name():
+    """This machine's Tailscale name (e.g. mac.tail1234.ts.net), or None without Tailscale."""
+    for cli in ("tailscale", "/Applications/Tailscale.app/Contents/MacOS/Tailscale"):
+        try:
+            out = subprocess.run([cli, "status", "--json"], capture_output=True, text=True, timeout=5)
+            name = json.loads(out.stdout).get("Self", {}).get("DNSName", "").rstrip(".")
+            if name:
+                return name
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            continue
+    return None
+
+
 def make_server(port):
     httpd = ThreadingHTTPServer(("0.0.0.0", port), Handler)
     httpd.daemon_threads = True  # open audio streams must not block shutdown
@@ -584,6 +599,11 @@ if __name__ == "__main__":
     print(f"  http://localhost:{PORT}/?t={TOKEN}")
     print(f"  http://{lan_ip()}:{PORT}/?t={TOKEN}")
     print(f"  http://{host}.local:{PORT}/?t={TOKEN}")
+    ts = tailscale_name()
+    if ts:
+        print("From anywhere on your Tailscale network (HTTPS; run `tailscale serve --bg "
+              f"{PORT}` once to turn it on):")
+        print(f"  https://{ts}/?t={TOKEN}")
     print(f"Pairing code: {TOKEN}   Cache: {CACHE}")
     print("Stems: available (Demucs)" if stems_available() else "Stems: not installed (run scripts/install-stems.sh)")
     try:
