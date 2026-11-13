@@ -7,6 +7,7 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 ## Contents
 
 - [What it does](#what-it-does)
+- [Themes](#themes)
 - [Quick start](#quick-start)
 - [How it works](#how-it-works)
 - [Using it](#using-it)
@@ -32,6 +33,12 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 - **Your own files:** drag MP3, WAV, M4A/AAC, FLAC, OGG/Opus or AIFF files onto a deck, or use Open file.
 - **Themes:** 16 of them, from plain colour schemes to live 3D scenes that move with the music.
 - **iPad:** works in Safari on the same Wi-Fi, or from anywhere over HTTPS with Tailscale, and installs to the home screen.
+
+## Themes
+
+Pick a theme from the menu at the top. Classic is a plain colour scheme. Forest, Firefly Meadow, Ocean, Desert Dusk and Snowy Mountain have animated illustrated backdrops, and the other ten are live 3D scenes behind the decks that move with the music. Full-size screenshots of each one are under [Screenshots](#screenshots).
+
+![All 16 tubedeck themes: Classic, Forest, Waterfall, Firefly Meadow, Ocean, Desert Dusk, Snowy Mountain, ISS / Orbit, Rainforest, Switzerland, Hakone, Wulong Karst, Chongqing, Times Square, Williamsburg and Aurora](docs/screenshots/themes.jpg)
 
 ## Quick start
 
