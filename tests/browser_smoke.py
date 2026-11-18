@@ -531,6 +531,49 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_track_memory_and_recorder(self):
+        """Hot cues, the cue point and a fixed BPM come back on reload; REC saves the mix to a file."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820}, accept_downloads=True)
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("localStorage.removeItem('tubedeck.track:kickTrack01')")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0 && decks.A.memReady", timeout=30000)
+        detected = pg.evaluate("decks.A.bpm")
+        pg.evaluate("decks.A.el.currentTime = 2.2")
+        pg.dispatch_event(".deck[data-deck=A] .pad-grid .pad:nth-child(2)", "pointerdown")
+        pg.dispatch_event(".deck[data-deck=A] .pad-grid .pad:nth-child(2)", "pointerup")
+        pg.click(".deck[data-deck=A] .bpm-fix[data-f='2']")
+        saved = pg.evaluate("[decks.A.hot[1], decks.A.bpm]")
+        self.assertIsNotNone(saved[0])
+        self.assertAlmostEqual(saved[1], round(detected * 2, 1), places=1)
+        # Reload the page and the track: everything comes back.
+        pg.reload()
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('B', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.B.memReady", timeout=30000)
+        self.assertAlmostEqual(pg.evaluate("decks.B.hot[1]"), saved[0], places=3)
+        self.assertAlmostEqual(pg.evaluate("decks.B.bpm"), saved[1], places=1)
+        self.assertNotIn("--", pg.evaluate("document.querySelectorAll('.deck[data-deck=B] .pad')[1].textContent") or "")
+        pg.evaluate("localStorage.removeItem('tubedeck.track:kickTrack01')")
+        # Record a couple of seconds of the mix, surviving a headphone reroute mid-way.
+        pg.dispatch_event(".deck[data-deck=B] .play", "pointerdown")
+        pg.click("#recBtn")
+        self.assertTrue(pg.evaluate("document.querySelector('#recBtn').classList.contains('on')"))
+        pg.wait_for_timeout(800)
+        pg.evaluate("phones.mode = 'split'; phones.route()")
+        pg.wait_for_timeout(1500)
+        with pg.expect_download() as dl:
+            pg.click("#recBtn")
+        d = dl.value
+        self.assertRegex(d.suggested_filename, r"^tubedeck-mix-.*\.(webm|m4a)$")
+        self.assertGreater(os.path.getsize(d.path()), 5000)
+        pg.evaluate("phones.mode = 'off'; phones.route()")
+        self.assertEqual(errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")

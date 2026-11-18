@@ -585,6 +585,7 @@ class Deck {
     $$('.bpm-fix', r).forEach(b => b.addEventListener('click', () => {
       if (!this.bpm) return;
       this.bpm = Math.round(this.bpm * +b.dataset.f * 10) / 10;
+      this.bpmEdited = true; this.remember();
       this.renderBpm();
       if (this.synced) this.sync(true);
       this.notifyFollowers();
@@ -618,7 +619,7 @@ class Deck {
     await this.connect();
     this.el.pause();
     this.track = meta; this.cue = 0; this.hot.fill(null); this.loop = null; this.manualIn = null; this.bpm = 0; this.wave = null; this.overviewImg = null;
-    this.stemsReady = false; this.mixRef = null;
+    this.stemsReady = false; this.mixRef = null; this.memReady = false;
     this.ui.title.textContent = meta.title || meta.id;
     this.ui.artist.textContent = meta.channel || '';
     this.ui.bpm.textContent = '--.-';
@@ -647,6 +648,7 @@ class Deck {
       this.el.load([{ name: 'mix', data: r.pcm }], buf.length);
       this.mixRef = r.ref;
       this.wave = r.wave; this.bpm = r.bpm; this.firstBeat = r.firstBeat;
+      this.recall();
       this.setState('');
       this.renderBpm();
       if (!masterDeck() || masterDeck() === this) this.makeMaster();
@@ -731,7 +733,7 @@ class Deck {
       this.el.pause(); this.el.currentTime = this.cue; this.ui.play.classList.remove('lit'); return;
     }
     const here = this.snap(this.el.currentTime);
-    if (Math.abs(here - this.cue) > 0.05) { this.cue = here; this.el.currentTime = here; return; }
+    if (Math.abs(here - this.cue) > 0.05) { this.cue = here; this.el.currentTime = here; this.remember(); return; }
     this.previewing = true; this.ui.cue.classList.add('lit'); this.el.play().catch(() => {});
   }
   cueUp() {
@@ -800,6 +802,7 @@ class Deck {
     if (this.taps.length < 4) return this.setState(`Tap ${4 - this.taps.length} more…`);
     this.bpm = Math.round(60000 * (this.taps.length - 1) / (now - this.taps[0]) / this.rate * 10) / 10;
     this.firstBeat = ((this.el.currentTime % this.beatSec) + this.beatSec) % this.beatSec;
+    this.bpmEdited = true; this.remember();
     this.setState(''); this.renderBpm(); this.notifyFollowers();
   }
 
@@ -899,7 +902,29 @@ class Deck {
     const p = this.ui.padGrid.children[i];
     p.classList.add('lit'); setTimeout(() => p.classList.remove('lit'), 150);
   }
+  // Per-track memory: the cue point, hot cues and a corrected BPM come back the next
+  // time the track is loaded (saved in this browser, keyed by track id).
+  remember() {
+    if (!this.track || !this.memReady) return;
+    const m = { cue: this.cue, hot: this.hot };
+    if (this.bpmEdited) Object.assign(m, { bpm: this.bpm, firstBeat: this.firstBeat });
+    store.set(`track:${this.track.id}`, JSON.stringify(m));
+  }
+  recall() {
+    let m = null;
+    try { m = JSON.parse(store.get(`track:${this.track.id}`) || 'null'); } catch {}
+    this.bpmEdited = false;
+    if (m) {
+      if (m.bpm > 0) { this.bpm = m.bpm; this.firstBeat = m.firstBeat || 0; this.bpmEdited = true; }
+      if (Array.isArray(m.hot)) m.hot.slice(0, 8).forEach((v, i) => { this.hot[i] = typeof v === 'number' ? v : null; });
+      if (m.cue > 0) { this.cue = m.cue; this.el.currentTime = m.cue; }
+    }
+    this.memReady = true;
+    this.renderPads();
+  }
+
   renderPads() {
+    this.remember();
     [...this.ui.padGrid.children].forEach((p, i) => {
       const letter = String.fromCharCode(65 + i);
       if (this.mode === 'loop') {
@@ -1330,6 +1355,54 @@ const mixer = {
   meter(L, v) { this.channels[L].fill.style.height = (v * 100).toFixed(1) + '%'; },
 };
 
+// ---------- mix recorder ----------
+// Records what the speakers hear (the master, including FX) to a file you can listen back to.
+const recorder = {
+  rec: null, dest: null, chunks: [], started: 0, timer: null,
+  type() { return ['audio/webm;codecs=opus', 'audio/mp4', 'audio/webm'].find(t => window.MediaRecorder?.isTypeSupported?.(t)) || ''; },
+  toggle() { return this.rec ? this.stop() : this.start(); },
+  start() {
+    if (!window.MediaRecorder) return flash("This browser can't record audio.");
+    audio();
+    this.dest = ctx.createMediaStreamDestination();
+    master.connect(this.dest);
+    const type = this.type();
+    this.rec = new MediaRecorder(this.dest.stream, { ...(type && { mimeType: type }), audioBitsPerSecond: 192000 });
+    this.chunks = [];
+    this.rec.ondataavailable = e => { if (e.data.size) this.chunks.push(e.data); };
+    this.rec.onstop = () => this.save();
+    this.rec.start(1000);
+    this.started = performance.now();
+    $('#recBtn').classList.add('on');
+    this.timer = setInterval(() => this.render(), 500); this.render();
+  },
+  stop() {
+    if (!this.rec) return;
+    this.rec.stop();
+    clearInterval(this.timer);
+    try { master.disconnect(this.dest); } catch {}
+    this.rec = null; this.dest = null;
+    $('#recBtn').classList.remove('on'); $('#recBtn').textContent = '● REC';
+  },
+  render() {
+    const s = Math.floor((performance.now() - this.started) / 1000);
+    $('#recBtn').textContent = `■ ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  },
+  save() {
+    const type = this.chunks[0]?.type || 'audio/webm';
+    const blob = new Blob(this.chunks, { type }); this.chunks = [];
+    const d = new Date(), pad = n => String(n).padStart(2, '0');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `tubedeck-mix-${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}.${type.includes('mp4') ? 'm4a' : 'webm'}`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    flash('Mix saved to your downloads.');
+  },
+};
+$('#recBtn').addEventListener('click', () => recorder.toggle());
+window.addEventListener('beforeunload', e => { if (recorder.rec) e.preventDefault(); });
+
 // ---------- headphones ----------
 // CUE sends a deck (pre-fader) to the headphones, blended with the master by MIX. Modes:
 //   off      - everything to one output, as before
@@ -1362,6 +1435,7 @@ const phones = {
       if (gen !== this.gen) return;
     }
     this.teardown();
+    if (recorder.dest) master.connect(recorder.dest);
     const keep = n => (this.nodes.push(n), n), dest = ctx.destination;
     // The headphone feed: cue bus and master, blended by MIX.
     const hp = keep(ctx.createGain());

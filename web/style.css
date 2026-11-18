@@ -300,3 +300,10 @@ body.midi-learning .midi-target { outline: 2px solid #ffcf6b !important; outline
 .open-file:hover { filter: brightness(1.15); }
 body.dropping .deck { outline: 2px dashed #ffffff33; outline-offset: -6px; }
 body.dropping .deck.drop-target { outline: 2px dashed #ffcf6b; background-color: rgba(255, 207, 107, .06); }
+
+/* Mix recorder */
+.rec-btn { height: 24px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line-soft, #333); background: transparent;
+  color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
+.rec-btn.on { background: #c62828; border-color: transparent; color: #fff; animation: recPulse 1.6s ease-in-out infinite; }
+@keyframes recPulse { 50% { box-shadow: 0 0 0 4px #c6282844; } }
+@media (prefers-reduced-motion: reduce) { .rec-btn.on { animation: none; } }
