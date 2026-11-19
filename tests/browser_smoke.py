@@ -331,7 +331,8 @@ class BrowserSmoke(unittest.TestCase):
         def changed(spec):
             return sum(abs(x - y) for x, y in zip(spec, dry)) / len(dry)
 
-        for fx_type in ["echo", "delay", "pingpong", "spiral", "reverb", "trans", "filter", "flanger", "phaser", "crush"]:
+        for fx_type in ["echo", "delay", "pingpong", "spiral", "reverb", "trans", "filter", "flanger", "phaser", "crush",
+                        "pitch", "helix", "mobius"]:
             pg.select_option(".fxunit[data-fx='0'] select", fx_type)
             pg.click(".fxunit[data-fx='0'] .fx-on")
             on_level = pg.evaluate(level)
@@ -370,6 +371,18 @@ class BrowserSmoke(unittest.TestCase):
         pg.wait_for_timeout(150)
         self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t0 + 0.5)
 
+        # ROLL as a Beat FX: held like the brake, it rolls the beat length and lands back in time.
+        pg.select_option(".fxunit[data-fx='0'] select", "roll")
+        pg.evaluate("decks.A.el.currentTime = 20")
+        start = pg.evaluate("decks.A.el.currentTime")
+        on.dispatch_event("pointerdown")
+        self.assertTrue(pg.evaluate("decks.A.loop && decks.A.loop.roll"))
+        pg.wait_for_timeout(1000)
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(50)
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+        self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), start + 1.05, delta=0.25)
+
         # ROLL: hold a pad to repeat a slice, release to land where the track would be.
         pg.evaluate("decks.A.el.currentTime = 10")
         pg.select_option(".deck[data-deck=A] .pad-mode", "roll")
@@ -385,7 +398,7 @@ class BrowserSmoke(unittest.TestCase):
         self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), start + 1.05, delta=0.2)
 
         # Each Color FX type changes the sound when the CFX knob is turned.
-        for cfx in ["filter", "dub", "noise", "crush", "jet"]:
+        for cfx in ["filter", "space", "dub", "sweep", "noise", "crush", "jet", "pitch"]:
             pg.select_option("#cfxType", cfx)
             pg.evaluate("mixer.channels.A.knobs.cfx.set(0.8)")
             self.assertGreater(changed(pg.evaluate(spectrum)), 1.0, f"cfx {cfx}: no audible change")
@@ -624,6 +637,7 @@ class BrowserSmoke(unittest.TestCase):
                 self.assertTrue(pg.evaluate(f"!under.gl || !!under.program('{theme}')"), f"{theme}: background shader failed to compile")
         pg.select_option("#themeSel", "meadow")
         pg.reload()
+        pg.wait_for_function("document.documentElement.dataset.theme")  # set once app.js has run
         self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")
         pg.evaluate("localStorage.removeItem('tubedeck.theme')")
 

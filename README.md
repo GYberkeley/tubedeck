@@ -25,8 +25,8 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 
 - **Two decks:** waveform overview and scrolling waveforms, Pioneer-style CUE, play/pause, a jog wheel you can scratch, tempo ±8% with key lock, automatic BPM detection (with ½ and ×2 fixes), TAP, SYNC and MASTER.
 - **Cues and loops:** 8 hot cues, beat loops from 1/32 to 512 beats (pads cover 1/4 to 32), manual loop in/out, beat jump, slip mode and ROLL.
-- **Mixer:** trim, 3-band EQ, Color FX (filter, dub echo, noise, crush, jet), channel faders with meters and an equal-power crossfader.
-- **Beat FX:** echo, delay, ping pong, spiral, reverb, flanger, phaser, trans, filter and crush, plus vinyl brake and back spin (hold to use; the track carries on as if it never stopped).
+- **Mixer:** trim, 3-band EQ, Color FX (filter, space, dub echo, sweep, noise, crush, jet, pitch), channel faders with meters and an equal-power crossfader.
+- **Beat FX:** echo, delay, ping pong, spiral, reverb, trans, filter, flanger, phaser, pitch, helix, mobius and bit crush, plus roll, vinyl brake and back spin (hold to use; the track carries on as if it never stopped). This covers rekordbox's Beat FX for the DDJ-FLX4.
 - **Stems:** split a downloaded track into vocals, instruments, bass and drums, then mute or isolate them (optional, needs [Demucs](#stems-optional)).
 - **Headphone cueing:** CUE buttons and four routing modes, including split cue for a single pair of headphones and a DJ controller's 4-output sound card.
 - **DJ controllers:** built-in mappings for the Pioneer DDJ-FLX4 and DDJ-1000, with lights, plus MIDI learn for any other controller.

@@ -136,7 +136,8 @@ class Knob {
 const FX_BEATS = [1 / 8, 1 / 4, 1 / 2, 3 / 4, 1, 2, 4, 8];
 const FX_KIND = {
   echo: 'send', delay: 'send', pingpong: 'send', spiral: 'send', reverb: 'send', flanger: 'send', phaser: 'send',
-  trans: 'insert', filter: 'insert', crush: 'insert', brake: 'deck', spin: 'deck',
+  helix: 'send', mobius: 'send',
+  trans: 'insert', filter: 'insert', crush: 'insert', pitch: 'insert', brake: 'deck', spin: 'deck', roll: 'deck',
 };
 const fxSources = () => ({ A: decks.A.chain?.xf, B: decks.B.chain?.xf, M: mixBus });
 
@@ -148,6 +149,40 @@ function updateDry() {
     const muted = fx.some(u => u.on && FX_KIND[u.type] === 'insert' && u.assign[src]);
     dry[src]?.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.005);
   }
+}
+
+// A delay-line pitch shifter: two delay taps sweep (sawtooth) half a grain apart and are
+// crossfaded with a cosine window, so the output is the input resampled by `ratio`.
+// A delay-line pitch shifter: two delay taps sweep half a grain apart and are crossfaded
+// with a cosine window, so the output is the input resampled by `ratio`. The sweep is an
+// exact linear ramp from a looping buffer (an oscillator's band-limited sawtooth isn't
+// straight enough and puts the pitch off by several semitones).
+function makePitchShifter(c, keep = n => n) {
+  const grain = 0.06, n = Math.round(grain * c.sampleRate), input = keep(c.createGain()), output = keep(c.createGain());
+  const ramp = c.createBuffer(1, n, c.sampleRate), win = c.createBuffer(1, n, c.sampleRate);
+  for (let i = 0; i < n; i++) {
+    const x = i / n * 2 - 1;
+    ramp.getChannelData(0)[i] = x; win.getChannelData(0)[i] = Math.cos(x * Math.PI / 2);
+  }
+  const t0 = c.currentTime + 0.02;
+  const taps = [0, grain / 2].map(offset => {
+    const d = keep(c.createDelay(0.5)), g = keep(c.createGain()), sweep = keep(c.createGain());
+    g.gain.value = 0;
+    for (const [buf, dest] of [[ramp, sweep], [win, g.gain]]) {
+      const s = keep(c.createBufferSource()); s.buffer = buf; s.loop = true; s.connect(dest); s.start(t0 + offset);
+    }
+    sweep.connect(d.delayTime);
+    input.connect(d).connect(g).connect(output);
+    return { d, sweep };
+  });
+  return {
+    input, output,
+    setRatio(r, t = c.currentTime) {
+      // Delay slope (1 - r): d = base + A * ramp, the ramp rising -1..1 once per grain.
+      const A = (1 - r) * grain / 2, base = Math.abs(A) + 0.003;
+      for (const { d, sweep } of taps) { d.delayTime.setTargetAtTime(base, t, 0.02); sweep.gain.setTargetAtTime(A, t, 0.02); }
+    },
+  };
 }
 
 function crushCurve(bits) {
@@ -210,13 +245,23 @@ class FxUnit {
     audio();
     this.on = !this.on; this.onBtn.classList.toggle('on', this.on);
     if (this.kind === 'deck') return this.motion(this.on);
+    if (this.type === 'helix' && this.helixCap) {
+      // Let one beat-length slice in, then close the input so it repeats unchanged.
+      const t = ctx.currentTime;
+      this.helixCap.gain.cancelScheduledValues(t);
+      this.helixCap.gain.setValueAtTime(this.on ? 1 : 0, t);
+      if (this.on) this.helixCap.gain.setValueAtTime(0, t + this.seconds);
+    }
     if (this.on) this.alignLfos();
     this.route();
   }
   // Vinyl brake / backspin act on the assigned decks themselves.
   motion(on) {
     const targets = this.assign.M ? ['A', 'B'] : ['A', 'B'].filter(L => this.assign[L]);
-    for (const L of targets) decks[L].el.motion(on ? this.type : null, this.beats * 60 / this.bpm);
+    for (const L of targets) {
+      if (this.type === 'roll') { if (on) decks[L].rollStart(this.beats, 'fx'); else decks[L].rollEnd('fx'); }
+      else decks[L].el.motion(on ? this.type : null, this.beats * 60 / this.bpm);
+    }
   }
 
   connect() {
@@ -287,6 +332,21 @@ class FxUnit {
     } else if (t === 'crush') {
       this.shaper = make('createWaveShaper');
       inp.connect(this.shaper).connect(wet);
+    } else if (t === 'pitch') {
+      // LEVEL sets the pitch: left of 12 o'clock lower (to -1 octave), right higher (to +1 octave).
+      this.shifter = makePitchShifter(ctx, n => (this.nodes.push(n), n));
+      inp.connect(this.shifter.input); this.shifter.output.connect(wet);
+    } else if (t === 'helix') {
+      // Captures one beat-length slice and keeps repeating it; LEVEL is the repeat level.
+      const d = this.delay = make('createDelay', 4), fb = make('createGain'), cap = make('createGain');
+      fb.gain.value = 0.995; this.helixCap = cap;
+      inp.connect(cap).connect(d); d.connect(wet); d.connect(fb).connect(d);
+    } else if (t === 'mobius') {
+      // A flanger whose sweep only ever rises (sawtooth), so it seems to climb forever.
+      const d = this.delay = make('createDelay', 0.05), fb = make('createGain');
+      d.delayTime.value = 0.006; fb.gain.value = 0.7;
+      lfo('sawtooth', -0.0045, d.delayTime);
+      inp.connect(d); d.connect(wet); d.connect(fb).connect(d);
     }
     this.applyLevel();
     this.retime(true);
@@ -299,6 +359,7 @@ class FxUnit {
     if (this.type === 'trans' && this.gate) { this.gate.gain.setValueAtTime(1 - v / 2, now); this.transLfo.depth.gain.setValueAtTime(v / 2, now); }
     if (this.type === 'filter' && this.sweep) this.sweep.depth.gain.setTargetAtTime(600 + v * 3600, now, 0.02);
     if (this.type === 'crush' && this.shaper) this.shaper.curve = crushCurve(Math.round(12 - v * 9));
+    if (this.type === 'pitch' && this.shifter) this.shifter.setRatio(2 ** ((v - 0.5) * 2));
   }
   // Start beat-synced LFOs on the master deck's next beat.
   alignLfos() {
@@ -320,7 +381,7 @@ class FxUnit {
     this.bpm = bpm;
     $('.fx-bpm-val', this.root).textContent = bpm.toFixed(1);
     const t = ctx.currentTime, sec = this.seconds, period = this.beats * 60 / bpm;
-    if (this.delay && this.type !== 'flanger') this.delay.delayTime.setTargetAtTime(sec, t, 0.05);
+    if (this.delay && this.type !== 'flanger' && this.type !== 'mobius') this.delay.delayTime.setTargetAtTime(sec, t, 0.05);
     if (this.delays) this.delays.forEach(d => d.delayTime.setTargetAtTime(sec, t, 0.05));
     if (this.type === 'spiral' && this.spiralLfo) { this.spiralLfo.osc.frequency.setValueAtTime(1 / (period * 4), t); this.spiralLfo.depth.gain.setValueAtTime(-sec * 0.35, t); }
     for (const l of this.lfos) if (this.type !== 'spiral') l.osc.frequency.setTargetAtTime(1 / Math.max(0.05, period), t, 0.05);
@@ -883,17 +944,21 @@ class Deck {
   }
   // ROLL: while a pad is held, repeat a slice on the beat grid; the track keeps
   // moving underneath and picks up there on release (rekordbox's slip roll).
-  rollDown(i) {
+  rollDown(i) { this.rollStart(PAD_ROLLS[i], i); }
+  // Roll a beat-length slice; `by` is the pad or 'fx' (the ROLL Beat FX) holding it.
+  rollStart(beats, by) {
+    if (!this.track) return;
     if (!this.bpm) return this.setState('Roll needs a BPM.');
-    const len = PAD_ROLLS[i] * this.beatSec, t = this.el.currentTime;
+    const len = beats * this.beatSec, t = this.el.currentTime;
     const start = this.quantize ? this.firstBeat + Math.floor((t - this.firstBeat) / len + 1e-6) * len : t;
     if (!this.roll) this.roll = { pos: t, at: performance.now(), rate: this.el.paused ? 0 : this.rate };
-    this.roll.pad = i;
-    this.loop = { start, end: start + len, beats: PAD_ROLLS[i], roll: true };
+    this.roll.pad = by;
+    this.loop = { start, end: start + len, beats, roll: true };
     this.renderPads(); this.renderLoop();
   }
-  padUp(i) {
-    if (!this.roll || this.roll.pad !== i) return;
+  padUp(i) { this.rollEnd(i); }
+  rollEnd(by) {
+    if (!this.roll || this.roll.pad !== by) return;
     const r = this.roll; this.roll = null; this.loop = null;
     this.el.currentTime = r.pos + (performance.now() - r.at) / 1000 * r.rate;
     this.renderPads(); this.renderLoop();
@@ -1299,6 +1364,21 @@ function buildColorFx(c, from, to) {
   fx.crushSend = g(0); fx.crush = c.createWaveShaper(); fx.crush.curve = crushCurve(6);
   from.connect(fx.crushSend).connect(fx.crush).connect(to);
   // Jet: a slow, deep flanger.
+  // Space: a reverb send, darker left of centre and brighter right.
+  fx.spaceSend = g(0); fx.spaceTone = c.createBiquadFilter(); fx.space = c.createConvolver();
+  const sl = c.sampleRate * 2.5, sir = c.createBuffer(2, sl, c.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = sir.getChannelData(ch); for (let i = 0; i < sl; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / sl, 2.5); }
+  fx.space.buffer = sir;
+  from.connect(fx.spaceSend).connect(fx.spaceTone).connect(fx.space).connect(to);
+  // Sweep: left of centre gates the sound on 1/4 beats, right is a band-pass sweeping up.
+  fx.gate = g(1); fx.gateLfo = c.createOscillator(); fx.gateLfo.type = 'square'; fx.gateDepth = g(0); fx.gateLfo.frequency.value = 8;  // 1/4 beat at 120 BPM until a track sets it
+  fx.gateLfo.connect(fx.gateDepth).connect(fx.gate.gain); fx.gateLfo.start();
+  fx.dry.disconnect(); fx.dry.connect(fx.gate).connect(to);
+  fx.bandSend = g(0); fx.band = c.createBiquadFilter(); fx.band.type = 'bandpass'; fx.band.Q.value = 3;
+  from.connect(fx.bandSend).connect(fx.band).connect(to);
+  // Pitch: the whole sound shifted, down left of centre and up right (up to an octave).
+  fx.pitch = makePitchShifter(c); fx.pitchSend = g(0);
+  from.connect(fx.pitchSend).connect(fx.pitch.input); fx.pitch.output.connect(to);
   fx.jetSend = g(0); const jd = c.createDelay(0.05), jfb = g(0.75), lfo = c.createOscillator(), depth = g(0.0035);
   jd.delayTime.value = 0.004; lfo.frequency.value = 0.25; lfo.connect(depth).connect(jd.delayTime); lfo.start();
   from.connect(fx.jetSend).connect(jd).connect(to); jd.connect(jfb).connect(jd);
@@ -1345,7 +1425,18 @@ const mixer = {
       if (d.bpm) set(x.dubDelay.delayTime, Math.min(1.9, 0.75 * 60 / d.liveBpm));
       set(x.noiseGain.gain, on('noise') * 0.25);
       x.noiseFilter.type = f < 0 ? 'lowpass' : 'highpass'; set(x.noiseFilter.frequency, f < 0 ? 200 + a * 4000 : 8000 - a * 7000);
-      set(x.crushSend.gain, on('crush')); set(x.dry.gain, type === 'crush' ? 1 - a : 1);
+      set(x.crushSend.gain, on('crush'));
+      set(x.spaceSend.gain, on('space') * 1.5);
+      x.spaceTone.type = f < 0 ? 'lowpass' : 'highpass'; set(x.spaceTone.frequency, f < 0 ? 2500 : 600);
+      const sweep = type === 'sweep' && a > 0.02;
+      set(x.gateDepth.gain, sweep && f < 0 ? a / 2 : 0); set(x.gate.gain, sweep && f < 0 ? 1 - a / 2 : 1);
+      if (d.bpm) set(x.gateLfo.frequency, 4 * d.liveBpm / 60);
+      set(x.bandSend.gain, sweep && f > 0 ? 1.4 : 0); set(x.band.frequency, 200 * Math.pow(2, a * 6));
+      const pitchOn = type === 'pitch' && a > 0.02;
+      if (pitchOn) x.pitch.setRatio(2 ** f, now);
+      set(x.pitchSend.gain, pitchOn ? 1 : 0);
+      // Inserts replace the dry sound as they come in.
+      set(x.dry.gain, type === 'crush' ? 1 - a : pitchOn ? 0 : sweep && f > 0 ? 1 - a : 1);
       if (type === 'crush' && Math.round(12 - a * 9) !== x.bits) { x.bits = Math.round(12 - a * 9); x.crush.curve = crushCurve(x.bits); }
       set(x.jetSend.gain, on('jet') * 0.9);
       c.ch.gain.setTargetAtTime((+ui.fader.value) ** 2, now, 0.01);
