@@ -513,7 +513,7 @@ class Player {
   set preservesPitch(b) { this.keylock = b; this.post({ type: 'set', keylock: b }); }
   get preservesPitch() { return this.keylock; }
   set webkitPreservesPitch(b) { this.preservesPitch = b; }
-  motion(kind, seconds) { this.post({ type: 'motion', kind, seconds }); }
+  motion(kind, seconds, slip) { this.post({ type: 'motion', kind, seconds, slip }); }
   setLoop(loop) { this.loop = loop ? { start: loop.start, end: loop.end } : null; this.post({ type: 'set', loop: this.loop }); }
   setGains(gains) { this.post({ type: 'set', gains }); }
   scratch(on, target, playing) {
@@ -553,6 +553,8 @@ const PAD_COLORS = ['#e8364f', '#f0a030', '#e6d32e', '#3fcf5a', '#2fc0d6', '#2d7
 const PAD_LOOPS = [1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32];
 const PAD_JUMPS = [-1, -4, -16, -32, 1, 4, 16, 32];
 const PAD_ROLLS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
+const KEY_PADS = [0, 1, 2, 3, -3, -2, -1, 0];   // semitones, as on the DDJ-FLX4's KEY SHIFT pads
+const TEMPO_RANGES = [6, 8, 16, 50];
 const LOOP_LENGTHS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 const SECONDS_PER_JOG_TURN = 1.8;
 const decks = {};
@@ -572,6 +574,7 @@ class Deck {
     this.quantize = true; this.slip = false; this.slipFrom = null; this.taps = []; this.scratching = false;
     this.stemOn = { vocals: true, other: true, bass: true, drums: true }; this.stemsReady = false;
     this.pending = null; // id of the track being fetched for this deck; stale fetches compare against it
+    this.tempoRange = 8; this.keyShift = 0; this.jumpScale = 1; this.loopAdjust = null; this.vu = 0;
     this.bindUi();
   }
 
@@ -589,14 +592,19 @@ class Deck {
     const hpf = Object.assign(c.createBiquadFilter(), { type: 'highpass' }); hpf.frequency.value = 10; hpf.Q.value = 1;
     const ch = c.createGain(), xf = c.createGain(), dry = c.createGain(), meter = c.createAnalyser();
     meter.fftSize = 1024;
-    src.connect(trim).connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
+    // Key shift (pads or KEY +/-): the deck goes through a pitch shifter only while shifted.
+    const keyDry = c.createGain(), keyWet = c.createGain(), key = makePitchShifter(c);
+    keyWet.gain.value = 0;
+    src.connect(keyDry).connect(trim); src.connect(key.input); key.output.connect(keyWet).connect(trim);
+    trim.connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
     const pre = c.createGain(), cue = c.createGain();      // pre-fader: what CUE sends to the headphones
     const cfx = buildColorFx(c, hpf, pre);
     pre.connect(ch); pre.connect(cue).connect(cueBus);
     cue.gain.value = this.cueOn ? 1 : 0;
     ch.connect(xf).connect(dry).connect(mixBus);
     ch.connect(meter);
-    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, cue, meter, buf: new Float32Array(1024) };
+    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, cue, meter, keyDry, keyWet, key, buf: new Float32Array(1024) };
+    this.setKey(this.keyShift || 0);
     mixer.apply();
     fx.forEach(u => u.route());
   }
@@ -810,7 +818,7 @@ class Deck {
 
   // Updates this deck's tempo and display without re-syncing the other deck.
   applyTempo(pct) {
-    this.tempo = clamp(pct, -8, 8);
+    this.tempo = clamp(pct, -this.tempoRange, this.tempoRange);
     this.ui.tempo.value = this.tempo;
     this.el.playbackRate = this.rate * (1 + this.bend);
     this.renderBpm();
@@ -834,7 +842,7 @@ class Deck {
     const target = other.liveBpm;
     const options = [target, target * 2, target / 2].map(t => (t / this.bpm - 1) * 100);
     const pct = options.reduce((a, b) => Math.abs(b) < Math.abs(a) ? b : a);
-    if (Math.abs(pct) > 8) { if (!silent) this.setState(`Too far apart to sync within ±8% (${this.bpm} vs ${target.toFixed(1)}).`); return; }
+    if (Math.abs(pct) > this.tempoRange) { if (!silent) this.setState(`Too far apart to sync within ±${this.tempoRange}% (${this.bpm} vs ${target.toFixed(1)}).`); return; }
     const first = !this.synced;
     this.synced = true;
     this.applyTempo(pct);
@@ -853,7 +861,7 @@ class Deck {
     this.ui.bpm.textContent = this.bpm ? this.liveBpm.toFixed(1) : '--.-';
     const p = (this.tempo > 0 ? '+' : '') + this.tempo.toFixed(1) + '%';
     this.ui.pct.textContent = p;
-    this.ui.jogPct.textContent = `${p} ±8`;
+    this.ui.jogPct.textContent = `${p} ±${this.tempoRange}`;
   }
 
   tap() {
@@ -924,6 +932,8 @@ class Deck {
 
   // --- pads ---
   padDown(i) {
+    if (this.mode === 'sampler') { sampler.play(i); return this.flashPad(i); }
+    if (this.mode === 'key') { this.setKey(KEY_PADS[i]); return; }
     if (!this.track) return;
     if (this.mode === 'roll') return this.rollDown(i);
     if (this.mode === 'loop') {
@@ -932,7 +942,7 @@ class Deck {
     }
     if (this.mode === 'jump') {
       if (!this.bpm) return this.setState('Beat jump needs a BPM.');
-      const by = PAD_JUMPS[i] * this.beatSec;
+      const by = PAD_JUMPS[i] * this.jumpScale * this.beatSec;
       this.el.currentTime = clamp(this.el.currentTime + by, 0, this.el.duration || 0);
       if (this.loop) this.loop = { ...this.loop, start: this.loop.start + by, end: this.loop.end + by };
       return this.flashPad(i);
@@ -967,6 +977,60 @@ class Deck {
     const p = this.ui.padGrid.children[i];
     p.classList.add('lit'); setTimeout(() => p.classList.remove('lit'), 150);
   }
+  // ---- controller features (DDJ shift layer and buttons) ----
+  setKey(semis) {
+    this.keyShift = clamp(Math.round(semis), -12, 12);
+    const c = this.chain;
+    if (c) {
+      const t = ctx.currentTime, on = this.keyShift !== 0;
+      c.key.setRatio(2 ** (this.keyShift / 12), t);
+      c.keyDry.gain.setTargetAtTime(on ? 0 : 1, t, 0.01); c.keyWet.gain.setTargetAtTime(on ? 1 : 0, t, 0.01);
+    }
+    if (this.mode === 'key') this.renderPads();
+    this.setState(this.keyShift ? `Key ${this.keyShift > 0 ? '+' : ''}${this.keyShift}` : '');
+  }
+  cycleTempoRange() {
+    this.tempoRange = TEMPO_RANGES[(TEMPO_RANGES.indexOf(this.tempoRange) + 1) % TEMPO_RANGES.length];
+    this.ui.tempo.min = -this.tempoRange; this.ui.tempo.max = this.tempoRange;
+    this.applyTempo(this.tempo); this.setState(`Tempo range ±${this.tempoRange}%`);
+  }
+  toStart(stop) {
+    if (!this.track) return;
+    if (stop && !this.el.paused) { this.el.pause(); this.ui.play.classList.remove('lit'); }
+    this.el.currentTime = 0;
+  }
+  reloopAndStop() {
+    if (!this.track || !this.loop && this.loopBeats == null) return;
+    if (!this.loop) this.beatLoop(this.loopBeats);
+    if (!this.loop) return;
+    this.el.pause(); this.ui.play.classList.remove('lit'); this.el.currentTime = this.loop.start;
+  }
+  jumpBeats(n) {
+    if (!this.track || !this.bpm) return;
+    const by = n * this.beatSec;
+    this.el.currentTime = clamp(this.el.currentTime + by, 0, this.el.duration || 0);
+    if (this.loop) this.loop = { ...this.loop, start: this.loop.start + by, end: this.loop.end + by };
+  }
+  scaleJumps(f) { this.jumpScale = clamp(this.jumpScale * f, 1 / 8, 8); this.renderPads(); this.setState(`Beat jump ×${beatLabel(this.jumpScale)}`); }
+  // Reverse: held censor (slip) or the REV switch (toggled, no slip).
+  reverse(on, slip) { if (this.track) { this.reversing = on; this.el.motion(on ? 'reverse' : null, 0, slip); } }
+  // Needle search buttons: scan at 8x while held.
+  search(dir) {
+    clearInterval(this.searchTimer); this.searchTimer = null;
+    if (!dir || !this.track) return;
+    this.searchTimer = setInterval(() => { this.el.currentTime = clamp(this.el.currentTime + dir * 0.4, 0, this.el.duration || 0); }, 50);
+  }
+  // Shift + jog: slide the beat grid (seconds) or stretch it (BPM), saved with the track.
+  gridSlide(sec) { if (!this.bpm) return; this.firstBeat = ((this.firstBeat + sec) % this.beatSec + this.beatSec) % this.beatSec; this.bpmEdited = true; this.remember(); }
+  gridStretch(dbpm) { if (!this.bpm) return; this.bpm = Math.max(40, Math.round((this.bpm + dbpm) * 100) / 100); this.bpmEdited = true; this.remember(); this.renderBpm(); this.notifyFollowers(); }
+  // Loop in / out adjust: while on, the jog moves that end of the loop.
+  adjustLoop(sec) {
+    if (!this.loop || !this.loopAdjust) return;
+    const l = { ...this.loop };
+    if (this.loopAdjust === 'in') l.start = clamp(l.start + sec, 0, l.end - 0.01); else l.end = Math.max(l.start + 0.01, l.end + sec);
+    this.loop = l; this.renderLoop();
+  }
+
   // Per-track memory: the cue point, hot cues and a corrected BPM come back the next
   // time the track is loaded (saved in this browser, keyed by track id).
   remember() {
@@ -999,8 +1063,15 @@ class Deck {
         p.innerHTML = `<span>${beatLabel(PAD_ROLLS[i])}</span><small>ROLL</small>`;
         p.classList.toggle('set', !!this.roll && this.roll.pad === i);
       } else if (this.mode === 'jump') {
-        p.innerHTML = `<span>${PAD_JUMPS[i] < 0 ? '◀' : '▶'} ${Math.abs(PAD_JUMPS[i])}</span><small>BEAT</small>`;
+        const n = PAD_JUMPS[i] * this.jumpScale;
+        p.innerHTML = `<span>${n < 0 ? '◀' : '▶'} ${beatLabel(Math.abs(n))}</span><small>BEAT</small>`;
         p.classList.remove('set');
+      } else if (this.mode === 'sampler') {
+        p.innerHTML = `<span>${sampler.label(i)}</span><small>BANK ${sampler.bank + 1}</small>`;
+        p.classList.remove('set');
+      } else if (this.mode === 'key') {
+        p.innerHTML = `<span>${KEY_PADS[i] > 0 ? '+' : ''}${KEY_PADS[i]}</span><small>KEY</small>`;
+        p.classList.toggle('set', this.keyShift === KEY_PADS[i] && (KEY_PADS[i] !== 0 || i === 0));
       } else {
         p.innerHTML = `<span>${letter}</span><small>${this.hot[i] == null ? '' : fmtTenths(this.hot[i])}</small>`;
         p.classList.toggle('set', this.hot[i] != null);
@@ -1136,7 +1207,7 @@ class Deck {
       this.chain.meter.getFloatTimeDomainData(this.chain.buf);
       let s = 0; for (const v of this.chain.buf) s += v * v;
       const db = 20 * Math.log10(Math.sqrt(s / this.chain.buf.length) + 1e-6);
-      mixer.meter(this.letter, clamp((db + 48) / 48, 0, 1));
+      mixer.meter(this.letter, this.vu = clamp((db + 48) / 48, 0, 1));
     }
   }
 
@@ -1387,7 +1458,7 @@ function buildColorFx(c, from, to) {
 
 // ---------- mixer ----------
 const mixer = {
-  channels: {},
+  channels: {}, xfAssign: { A: 'A', B: 'B' },
   init() {
     for (const L of ['A', 'B']) {
       const root = $(`.channel[data-ch=${L}]`);
@@ -1406,7 +1477,8 @@ const mixer = {
   },
   apply() {
     const x = +$('#xfader').value, p = (x + 1) / 2 * Math.PI / 2;
-    const xg = { A: Math.cos(p), B: Math.sin(p) };
+    const side = { A: Math.cos(p), B: Math.sin(p), T: 1 };
+    const xg = { A: side[this.xfAssign.A], B: side[this.xfAssign.B] };
     for (const L of ['A', 'B']) {
       const d = decks[L], c = d && d.chain;
       if (!c) continue;
@@ -1445,6 +1517,67 @@ const mixer = {
   },
   meter(L, v) { this.channels[L].fill.style.height = (v * 100).toFixed(1) + '%'; },
 };
+
+// ---------- sampler ----------
+// Two banks of eight one-shots, synthesized once on first use (no audio files to ship).
+// SAMPLER pad mode plays them; SHIFT + pad stops one. They play straight into the master.
+const SAMPLE_BANKS = [
+  ['AIRHORN', 'SIREN', 'RISER', 'DROP', 'LASER', 'IMPACT', 'NOISE UP', 'SCRATCH'],
+  ['KICK', 'SNARE', 'CLAP', 'HAT', 'OPEN HAT', 'CRASH', '808', 'COWBELL'],
+];
+const sampler = {
+  bank: 0, buffers: {}, playing: {}, out: null, level: 0.8,
+  label(i) { return SAMPLE_BANKS[this.bank][i]; },
+  setBank(b) { this.bank = (b + SAMPLE_BANKS.length) % SAMPLE_BANKS.length; Object.values(decks).forEach(d => d.mode === 'sampler' && d.renderPads()); },
+  setLevel(v) { this.level = v; if (this.out) this.out.gain.setTargetAtTime(v, ctx.currentTime, 0.02); },
+  async play(i) {
+    audio();
+    if (!this.out) { this.out = ctx.createGain(); this.out.gain.value = this.level; this.out.connect(master); }
+    const name = this.label(i), buf = this.buffers[name] || (this.buffers[name] = await synthSample(name));
+    this.stop(i);
+    const s = ctx.createBufferSource(); s.buffer = buf; s.connect(this.out); s.start();
+    this.playing[`${this.bank}:${i}`] = s;
+  },
+  stop(i) { const k = `${this.bank}:${i}`; try { this.playing[k]?.stop(); } catch {} delete this.playing[k]; },
+};
+async function synthSample(name) {
+  const sr = 44100, dur = { AIRHORN: 1.7, SIREN: 2.2, RISER: 4, DROP: 2.5, IMPACT: 2, 'NOISE UP': 2.2, CRASH: 2.2, 808: 1.6 }[name] || 0.7;
+  const c = new OfflineAudioContext(2, Math.ceil(sr * dur), sr), out = c.createGain();
+  out.connect(c.destination);
+  const noise = () => { const b = c.createBuffer(1, c.length, sr), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    const s = c.createBufferSource(); s.buffer = b; s.start(); return s; };
+  const osc = (type, f) => { const o = c.createOscillator(); o.type = type; o.frequency.value = f; o.start(); return o; };
+  const env = (node, points) => { const g = c.createGain(); g.gain.value = 0; for (const [t, v] of points) g.gain.linearRampToValueAtTime(v, t); node.connect(g); return g; };
+  const filt = (node, type, f, q = 0.7) => { const b = c.createBiquadFilter(); b.type = type; b.frequency.value = f; b.Q.value = q; node.connect(b); return b; };
+  const decay = (node, peak, len) => env(node, [[0.002, peak], [len, 0]]);
+  switch (name) {
+    case 'AIRHORN': { const mix = c.createGain();
+      [466, 471, 932].forEach(f => osc('sawtooth', f).connect(mix));
+      env(filt(mix, 'lowpass', 2800), [[0.01, 0.25], [0.22, 0.25], [0.24, 0], [0.32, 0], [0.33, 0.25], [0.55, 0.25], [0.57, 0], [0.65, 0], [0.66, 0.25], [1.6, 0.2], [1.7, 0]]).connect(out); break; }
+    case 'SIREN': { const o = osc('square', 700), l = osc('sine', 3.5), d = c.createGain(); d.gain.value = 300; l.connect(d).connect(o.frequency);
+      o.frequency.linearRampToValueAtTime(1100, dur); env(filt(o, 'lowpass', 3000), [[0.02, 0.2], [dur - 0.1, 0.2], [dur, 0]]).connect(out); break; }
+    case 'RISER': { const f = filt(noise(), 'bandpass', 300, 2); f.frequency.exponentialRampToValueAtTime(9000, dur);
+      const o = osc('sawtooth', 150); o.frequency.exponentialRampToValueAtTime(1200, dur);
+      env(f, [[dur * 0.9, 0.5], [dur, 0]]).connect(out); env(filt(o, 'lowpass', 2500), [[dur * 0.9, 0.12], [dur, 0]]).connect(out); break; }
+    case 'DROP': { const o = osc('sine', 1200); o.frequency.exponentialRampToValueAtTime(40, dur);
+      env(o, [[0.01, 0.5], [dur * 0.8, 0.4], [dur, 0]]).connect(out); break; }
+    case 'LASER': { const o = osc('square', 3000); o.frequency.exponentialRampToValueAtTime(180, 0.3); decay(filt(o, 'lowpass', 5000), 0.2, 0.35).connect(out); break; }
+    case 'IMPACT': { decay(filt(noise(), 'lowpass', 900), 0.8, 1.2).connect(out);
+      const o = osc('sine', 70); o.frequency.exponentialRampToValueAtTime(35, 1.5); decay(o, 0.9, 1.9).connect(out); break; }
+    case 'NOISE UP': { const f = filt(noise(), 'highpass', 200, 4); f.frequency.exponentialRampToValueAtTime(12000, dur); env(f, [[dur * 0.95, 0.35], [dur, 0]]).connect(out); break; }
+    case 'SCRATCH': { const f = filt(osc('sawtooth', 220), 'bandpass', 900, 3), l = osc('sine', 6), d = c.createGain();
+      d.gain.value = 700; l.connect(d).connect(f.frequency); env(f, [[0.02, 0.5], [0.55, 0.4], [0.65, 0]]).connect(out); break; }
+    case 'KICK': { const o = osc('sine', 160); o.frequency.exponentialRampToValueAtTime(45, 0.12); decay(o, 1, 0.5).connect(out); break; }
+    case 'SNARE': decay(filt(noise(), 'highpass', 1200), 0.6, 0.22).connect(out); decay(osc('triangle', 190), 0.5, 0.12).connect(out); break;
+    case 'CLAP': env(filt(noise(), 'bandpass', 1200, 1.5), [[0.001, 0.8], [0.01, 0.1], [0.012, 0.8], [0.022, 0.1], [0.024, 0.8], [0.25, 0]]).connect(out); break;
+    case 'HAT': decay(filt(noise(), 'highpass', 7500), 0.4, 0.05).connect(out); break;
+    case 'OPEN HAT': decay(filt(noise(), 'highpass', 7000), 0.35, 0.45).connect(out); break;
+    case 'CRASH': decay(filt(noise(), 'highpass', 3500), 0.45, 2.1).connect(out); break;
+    case '808': { const o = osc('sine', 62); o.frequency.exponentialRampToValueAtTime(50, 1.2); decay(o, 0.9, 1.55).connect(out); break; }
+    case 'COWBELL': { const m = c.createGain(); osc('square', 545).connect(m); osc('square', 815).connect(m); decay(filt(m, 'bandpass', 900, 2), 0.35, 0.45).connect(out); break; }
+  }
+  return c.startRendering();
+}
 
 // ---------- mix recorder ----------
 // Records what the speakers hear (the master, including FX) to a file you can listen back to.

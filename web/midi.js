@@ -13,16 +13,18 @@
 //   beat FX 0x94    on 47, beat 4A/4B, select 63, level 0xB4 02
 
 const MIDI_STEMS = ['vocals', 'other', 'bass', 'drums'];
-const PAD_BANKS = { 0x00: 'hot', 0x60: 'loop', 0x20: 'jump', 0x10: 'roll', 0x40: 'stems' };
-const MODE_BANK = { hot: 0x00, loop: 0x60, jump: 0x20, roll: 0x10 };
-const MODE_BUTTONS = { 0x1B: 'hot', 0x6D: 'loop', 0x20: 'jump', 0x1E: 'roll' };
+const PAD_BANKS = { 0x00: 'hot', 0x60: 'loop', 0x20: 'jump', 0x10: 'roll', 0x40: 'stems', 0x30: 'sampler', 0x70: 'key' };
+const MODE_BANK = { hot: 0x00, loop: 0x60, jump: 0x20, roll: 0x10, sampler: 0x30, key: 0x70 };
+const MODE_BUTTONS = { 0x1B: 'hot', 0x6D: 'loop', 0x20: 'jump', 0x1E: 'roll', 0x6B: 'roll', 0x22: 'sampler', 0x6F: 'key' };
+// The DDJ-1000's Beat FX selector, position by position.
+const DDJ1000_FX = ['delay', 'echo', 'pingpong', 'spiral', 'reverb', 'trans', 'filter', 'flanger', 'phaser', 'pitch', 'roll', 'roll', 'brake', 'helix'];
 const FLX4_KEEPALIVE = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7];
 
 const PRESETS = [
   // Jog resolution in ticks per platter turn, as used by the Mixxx mappings.
-  { match: /FLX4/i, name: 'Pioneer DDJ-FLX4', ticksPerTurn: 720, keepAlive: FLX4_KEEPALIVE },
-  { match: /DDJ-?1000/i, name: 'Pioneer DDJ-1000', ticksPerTurn: 2048 },
-  { match: /DDJ-?(400|800|SX|SR|RB|REV)/i, name: 'Pioneer DDJ (generic)', ticksPerTurn: 1024 },
+  { match: /FLX4/i, name: 'Pioneer DDJ-FLX4', model: 'flx4', ticksPerTurn: 720, keepAlive: FLX4_KEEPALIVE },
+  { match: /DDJ-?1000/i, name: 'Pioneer DDJ-1000', model: '1000', ticksPerTurn: 2048 },
+  { match: /DDJ-?(400|800|SX|SR|RB|REV)/i, name: 'Pioneer DDJ (generic)', model: 'generic', ticksPerTurn: 1024 },
 ];
 
 const midi = {
@@ -101,9 +103,13 @@ const midi = {
     if (type === 0xB0 && ch <= 3) return this.deckCC(this.deckOf(ch), ch, d1, d2);
     if (st === 0xB6) return this.mixerCC(d1, d2);
     if (st === 0x96 && on) {
-      if (d1 === 0x46 || d1 === 0x47) { this.loadSelected(d1 === 0x46 ? 'A' : 'B'); return `load deck ${d1 === 0x46 ? 1 : 2}`; }
+      if (d1 >= 0x46 && d1 <= 0x49) { const L = d1 % 2 ? 'B' : 'A'; this.loadSelected(L); return `load deck ${L === 'A' ? 1 : 2}`; }
+      if (d1 === 0x41 || d1 === 0x42 || d1 === 0x65) { showTab(tab === 'results' ? 'library' : 'results'); return 'browser: switch list'; }
+      if (d1 === 0x66) { showTab('results'); return 'browser: back to results'; }
+      if (d1 === 0x7A) { $('#fxToggle').click(); return 'view: FX panel'; }
       return '';
     }
+    if (st === 0x9F) return 'device check';
     if (st === 0x94 || st === 0x95) return this.fxNote(d1, on);
     if (st === 0xB4 && (d1 === 0x02 || d1 === 0x22)) { this.fine('fx', d1, d2, f => this.knob(fx[0].level, f)); return 'FX level'; }
     return '';
@@ -115,7 +121,10 @@ const midi = {
       case 0x0B: press(() => d.togglePlay()); return 'play';
       case 0x0C: on ? d.cueDown() : d.cueUp(); return 'cue';
       case 0x58: press(() => (d.synced ? d.unsync() : d.sync())); return 'sync';
-      case 0x5C: press(() => d.makeMaster()); return 'master';
+      case 0x5C: if (this.preset?.model === '1000') return 'key sync (needs key detection)';
+        press(() => d.makeMaster()); return 'master';
+      case 0x60: if (this.preset?.model === '1000') { press(() => d.setKey(0)); return 'key reset'; }
+        press(() => d.cycleTempoRange()); return 'tempo range';
       case 0x36: d.jogTouch(on); return on ? 'jog touch' : 'jog release';
       case 0x10: press(() => { if (!d.loop && d.manualIn == null) d.manualLoop(); }); return 'loop in';
       case 0x11: press(() => { if (!d.loop && d.manualIn != null) d.manualLoop(); }); return 'loop out';
@@ -126,7 +135,33 @@ const midi = {
       case 0x1A: press(() => d.ui.mt.click()); return 'key lock';
       case 0x68: press(() => d.ui.quant.click()); return 'quantize';
       case 0x54: press(() => phones.toggleCue(d.letter)); return 'headphone cue';
+      case 0x3F: return 'shift';
+      case 0x69: return 'keyboard mode (pads toggle stems)';
+      case 0x67: return 'jog touch (search)';
+      case 0x48: press(() => d.toStart(false)); return 'jump to start';
+      case 0x47: press(() => d.toStart(true)); return 'back to start and stop';
+      case 0x50: press(() => d.reloopAndStop()); return 'reloop and stop';
+      case 0x4C: press(() => { d.loopAdjust = d.loopAdjust === 'in' ? null : 'in'; }); return 'loop in adjust';
+      case 0x4E: press(() => { d.loopAdjust = d.loopAdjust === 'out' ? null : 'out'; }); return 'loop out adjust';
+      case 0x3E: press(() => d.jumpBeats(-32)); return 'jump back 32 beats';
+      case 0x3D: press(() => d.jumpBeats(32)); return 'jump forward 32 beats';
+      case 0x0E: case 0x15: d.reverse(on, true); return 'censor (slip reverse)';
+      case 0x38: press(() => d.reverse(!d.reversing, false)); return 'reverse';
+      case 0x35: press(() => d.ui.quant.click()); return 'quantize';
+      case 0x40: press(() => d.ui.slip.click()); return 'slip';
+      case 0x16: press(() => { mixer.xfAssign[d.letter] = 'A'; mixer.apply(); }); return 'crossfader assign A';
+      case 0x1D: press(() => { mixer.xfAssign[d.letter] = 'T'; mixer.apply(); }); return 'crossfader assign THRU';
+      case 0x18: press(() => { mixer.xfAssign[d.letter] = 'B'; mixer.apply(); }); return 'crossfader assign B';
+      case 0x26: press(() => d.scaleJumps(0.5)); return 'beat jump size ½';
+      case 0x2E: press(() => d.scaleJumps(2)); return 'beat jump size ×2';
+      case 0x5E: case 0x70: d.search(on ? -1 : 0); return 'search back';
+      case 0x5F: case 0x71: d.search(on ? 1 : 0); return 'search forward';
+      case 0x64: press(() => d.setKey(0)); return 'key reset';
+      case 0x65: return 'key sync (needs key detection)';
       default:
+        if (this.preset?.model === '1000' && (n <= 0x09 || n >= 0x7A)) {
+          press(() => sampler.setBank(sampler.bank + (n >= 0x01 && n <= 0x08 ? -1 : 1))); return 'sampler bank';
+        }
         if (n in MODE_BUTTONS) { press(() => this.setMode(d, MODE_BUTTONS[n])); return `pad mode ${MODE_BUTTONS[n]}`; }
         return '';
     }
@@ -139,6 +174,17 @@ const midi = {
     const bank = d1 & 0xF0, i = d1 & 0x07, mode = PAD_BANKS[bank];
     if (!mode) return '';
     if (mode === 'stems') { if (on && !shift) d.toggleStem(MIDI_STEMS[i & 3]); return `stem ${MIDI_STEMS[i & 3]}`; }
+    if (mode === 'sampler') {
+      if (d.mode !== 'sampler') this.setMode(d, 'sampler');
+      if (on) shift ? sampler.stop(i) : sampler.play(i);
+      return shift ? `stop sample ${i + 1}` : `sample ${i + 1}`;
+    }
+    if (mode === 'key') {
+      if (d.mode !== 'key') this.setMode(d, 'key');
+      if (on) shift ? d.setKey(d.keyShift + (i < 4 ? 1 : -1)) : d.setKey(KEY_PADS[i]);
+      return 'key shift';
+    }
+    if (mode === 'jump' && shift && (i === 6 || i === 7)) { if (on) d.scaleJumps(i === 6 ? 0.5 : 2); return 'beat jump size'; }
     if (d.mode !== mode) this.setMode(d, mode);
     if (mode === 'hot' && shift) { if (on && d.hot[i] != null) { d.hot[i] = null; d.renderPads(); } return `clear hot cue ${i + 1}`; }
     on ? d.padDown(i) : d.padUp(i);
@@ -148,8 +194,11 @@ const midi = {
   deckCC(d, ch, n, v) {
     const L = d.letter, k = mixer.channels[L].knobs, t = this.preset?.ticksPerTurn || 1024, rel = v - 64;
     switch (n) {
-      case 0x22: d.jogTurn(rel / t, true); return 'jog scratch';
-      case 0x21: case 0x23: d.jogTurn(rel / t, false); return 'jog bend';
+      case 0x22: case 0x21: case 0x23:
+        if (d.loopAdjust && d.loop) { d.adjustLoop(rel / t * 0.25); return 'loop adjust'; }
+        d.jogTurn(rel / t, n === 0x22); return n === 0x22 ? 'jog scratch' : 'jog bend';
+      case 0x1F: d.gridStretch(rel / t * 2); return 'beat grid stretch';
+      case 0x26: d.gridSlide(rel / t * 0.1); return 'beat grid slide';
       case 0x29: d.jogTurn(rel * 8 / t, false); return 'jog search';
       case 0x00: case 0x20:
         // Pioneer tempo faders read 0 at the top, which is the slow end.
@@ -175,6 +224,12 @@ const midi = {
     if (n === 0x0C || n === 0x2C) { this.fine('hpmix', n, v, f => this.knob(phones.mixKnob, f)); return 'headphones mix'; }
     if (n === 0x0D || n === 0x2D) { this.fine('hplvl', n, v, f => this.knob(phones.levelKnob, f)); return 'headphones level'; }
     if (n === 0x40) { this.browse(v > 64 ? v - 128 : v); return 'browse'; }
+    if (n === 0x64) {
+      const step = v > 64 ? v - 128 : v;
+      if (this.preset?.model === 'flx4') { $(step > 0 ? '#zoomOut' : '#zoomIn').click(); return 'waveform zoom'; }
+      this.browse(step * 5); return 'browse (fast)';
+    }
+    if (n === 0x03 || n === 0x23) { this.fine('smp', n, v, f => sampler.setLevel(f)); return 'sampler volume'; }
     return '';
   },
 
@@ -184,6 +239,11 @@ const midi = {
       // Brake and back spin are held; the other effects toggle.
       if (u.kind === 'deck') { if (on !== u.on) u.toggle(); } else if (on) u.toggle();
       return 'beat FX on/off';
+    }
+    if (n === 0x43) { if (on) fx.forEach(x => { if (x.on) x.toggle(); }); return 'all FX off'; }
+    if (n >= 0x20 && n <= 0x2D) {
+      if (on) { const sel = $('select', u.root); sel.value = DDJ1000_FX[n - 0x20]; sel.dispatchEvent(new Event('change')); }
+      return `beat FX: ${DDJ1000_FX[n - 0x20]}`;
     }
     if (!on) return '';
     if (n === 0x4A || n === 0x4B) { u.beatIx = clamp(u.beatIx + (n === 0x4B ? 1 : -1), 0, FX_BEATS.length - 1); u.renderBeat(); u.retime(true); return 'beat FX length'; }
@@ -224,12 +284,15 @@ const midi = {
       set(0x90 + ch, 0x0C, loaded && d.el.paused);
       set(0x90 + ch, 0x58, d.synced);
       set(0x90 + ch, 0x54, !!d.cueOn);
+      if (this.preset.model === '1000') { set(0x90 + ch, 0x40, d.slip); set(0x90 + ch, 0x35, d.quantize); }
+      want.set(`${0xB0 + ch}:2`, Math.round(clamp(d.vu || 0, 0, 1) * 127));   // channel level meter
       set(0x90 + ch, 0x10, !!d.loop || d.manualIn != null);
       set(0x90 + ch, 0x11, !!d.loop);
       set(0x90 + ch, 0x4D, !!d.loop);
       const pads = 0x97 + 2 * ch, bank = MODE_BANK[d.mode] ?? 0;
       for (let i = 0; i < 8; i++) {
-        const lit = d.mode === 'hot' ? d.hot[i] != null : d.mode === 'loop' ? d.loop?.beats === PAD_LOOPS[i] && !d.loop.roll : loaded;
+        const lit = d.mode === 'hot' ? d.hot[i] != null : d.mode === 'loop' ? d.loop?.beats === PAD_LOOPS[i] && !d.loop.roll
+          : d.mode === 'sampler' ? true : d.mode === 'key' ? d.keyShift === KEY_PADS[i] : loaded;
         for (const b of Object.values(MODE_BANK)) set(pads, b + i, b === bank && lit);
       }
     });

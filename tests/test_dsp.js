@@ -152,6 +152,21 @@ test('backspin runs backwards and winds down', () => {
   assert.ok(Math.abs(dsp.pos / SR - 6.5) < 0.01, `resumed at ${dsp.pos / SR}`);
 });
 
+test('reverse: censor slips back into time, the REV switch carries on from where it got to', () => {
+  const dsp = deck([{ name: 'mix', data: tone(440, 10) }], 10);
+  dsp.handle({ type: 'seek', pos: 5 });
+  dsp.handle({ type: 'set', playing: true, rate: 1 });
+  dsp.handle({ type: 'motion', kind: 'reverse', slip: true });
+  render(dsp, 1);
+  assert.ok(Math.abs(dsp.pos / SR - 4) < 0.01, `reversed to ${dsp.pos / SR}`);
+  dsp.handle({ type: 'motion', kind: null });
+  assert.ok(Math.abs(dsp.pos / SR - 6) < 0.01, `censor resumed at ${dsp.pos / SR}`);
+  dsp.handle({ type: 'motion', kind: 'reverse', slip: false });
+  render(dsp, 1);
+  dsp.handle({ type: 'motion', kind: null });
+  assert.ok(Math.abs(dsp.pos / SR - 5) < 0.01, `REV carried on from ${dsp.pos / SR}`);
+});
+
 test('mix minus a muted stem: original when nothing is muted, the remainder when muted', () => {
   const vocals = tone(440, 3, 0.2), drums = tone(880, 3, 0.2), mix = new Int16Array(vocals.length);
   for (let i = 0; i < mix.length; i++) mix[i] = vocals[i] + drums[i];
