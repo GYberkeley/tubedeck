@@ -653,6 +653,104 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_ddj1000_jog_screen_handshake(self):
+        """The DDJ-1000 handshake waits for its sound card, answers the challenge correctly, then brings the screens up."""
+        pg = self.page()
+        # No network in tests: the recorded bring-up is unavailable, so the short one is used.
+        pg.evaluate("jogScreens.loadingBurst = Promise.resolve(); jogScreens.burst = null")
+        pg.evaluate("""() => { window.sent = []; midi.outputs = [{ send: b => sent.push(Array.from(b)) }]; midi.preset = PRESETS[1];
+            window.ddj = body => midi.receive(new Uint8Array([0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, ...body, 0xF7])); }""")
+        # Just connected: nothing but the keep-alive until the unit has asked and been answered.
+        pg.evaluate("jogScreens.expect(); sent.length = 0; midi.lights()")
+        self.assertEqual(pg.evaluate("sent.length"), 0)
+        # "Who are you?" before the DDJ's audio is playing: held, not answered.
+        pg.evaluate("ddj([0x11, 0x02])")
+        self.assertEqual(pg.evaluate("jogScreens.state"), "waiting")
+        self.assertEqual(pg.evaluate("sent.filter(m => m[0] === 0xF0 && m[9] === 0x12).length"), 0)
+        # Once tubedeck plays through the DDJ's sound card, it answers with its identity.
+        pg.evaluate("audio(); phones.mode = 'quad'; phones.mainId = 'ddj'; phones.labels = { ddj: 'DDJ-1000' }; jogScreens.poll()")
+        pg.wait_for_function("ctx.state === 'running'")
+        pg.evaluate("jogScreens.poll()")
+        ident = pg.evaluate("sent.find(m => m[0] === 0xF0 && m[9] === 0x12)")
+        self.assertEqual(ident[9:11], [0x12, 0x2A])
+        self.assertIn(list(b"PioneerDJ"), [ident[i:i + 9] for i in range(len(ident))])
+        # The challenge: seed 12 34 AB CD (as nibbles). The answer's hash is FNV-1a over seed and seed^secret.
+        pg.evaluate("ddj([0x13, 0x0C, 0x03, 0x0A, 0x1, 0x2, 0x3, 0x4, 0xA, 0xB, 0xC, 0xD])")
+        cap = pg.evaluate("sent.find(m => m[0] === 0xF0 && m[9] === 0x14)")
+        self.assertEqual(len(cap), 66)
+        hash_spread = [0xE, 0xC, 0x9, 0x8, 0x6, 0x8, 0x8, 0xE]          # ec98688e, computed by the reference code
+        self.assertIn(hash_spread, [cap[i:i + 8] for i in range(len(cap))])
+        # ACK: unlocked, and the screens are switched on for all four decks.
+        pg.evaluate("ddj([0x15, 0x02])")
+        self.assertEqual(pg.evaluate("jogScreens.state"), "unlocked")
+        pg.wait_for_function("sent.some(m => m[0] === 0x93 && m[1] === 0x5D && m[2] === 0)", timeout=5000)
+        self.assertTrue(pg.evaluate("sent.some(m => m[0] === 0x9F && m[1] === 0x09 && m[2] === 0x7F)"))  # PC app connect
+        pg.evaluate("sent.length = 0; midi.lit.clear(); midi.lights()")
+        self.assertGreater(pg.evaluate("sent.length"), 0)                                           # lights back on
+        # With the recorded bring-up available it is replayed whole, timed, and lights wait for it.
+        pg.evaluate("""() => { jogScreens.burst = [[0x90, 0x0B, 0x00], [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x34, 0xF7]];
+            window.timed = []; midi.outputs = [{ send: (b, at) => timed.push([Array.from(b), at]) }];
+            jogScreens.bringing = false; jogScreens.bringUp(); }""")
+        pg.wait_for_function("timed.filter(x => x[1]).length === 2", timeout=5000)
+        self.assertFalse(pg.evaluate("jogScreens.quiet()"))                 # lights held during the burst
+        pg.wait_for_function("jogScreens.quiet()", timeout=3000)
+        # A recording that doesn't match the pinned fingerprint is refused.
+        pg.evaluate("""async () => { jogScreens.burst = null; jogScreens.loadingBurst = null;
+            const real = window.fetch; window.fetch = async () => new Response('900b00\\n'); await jogScreens.loadBurst(); window.fetch = real; }""")
+        self.assertIsNone(pg.evaluate("jogScreens.burst"))
+        pg.evaluate("phones.mode = 'off'")
+        self.assertEqual(self.errors, [])
+        pg.close()
+
+    def test_key_detection_and_shift(self):
+        """Each track gets a detected key; − / + / reset shift it and SYNC matches the other deck harmonically."""
+        pg = self.page()
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.key", timeout=30000)
+        self.assertRegex(pg.evaluate("document.querySelector('.deck[data-deck=A] .key-val').textContent"), r"^(1[0-2]|[1-9])[AB]$")
+        pg.click(".deck[data-deck=A] .key-up")
+        pg.click(".deck[data-deck=A] .key-up")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 2)
+        self.assertTrue(pg.evaluate("document.querySelector('.deck[data-deck=A] .key-val').classList.contains('shifted')"))
+        pg.click(".deck[data-deck=A] .key-reset")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 0)
+        # Key sync against a known key on the other deck: A minor (8A) vs C major (8B) = no shift needed.
+        pg.evaluate("decks.A.key = { tonic: 9, mode: 'min' }; decks.B.key = { tonic: 0, mode: 'maj' }; decks.A.keySync()")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 0)
+        pg.evaluate("decks.A.key = { tonic: 2, mode: 'maj' }; decks.A.keySync()")             # D major (10B) -> C major, 2 down
+        self.assertTrue(pg.evaluate("keysMix(decks.A.liveKey, decks.B.liveKey)"))
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), -2)
+        # The DDJ-1000's KEY SYNC button does the same.
+        pg.evaluate("decks.A.setKey(0); midi.preset = PRESETS[1]; midi.pioneer(0x90, 0x65, 0x7F)")
+        self.assertTrue(pg.evaluate("keysMix(decks.A.liveKey, decks.B.liveKey)"))
+        self.assertEqual(self.errors, [])
+        pg.close()
+
+    def test_controller_test_page(self):
+        """The controller test ticks controls as they arrive, measures the jog, lists unhandled messages and reports it all."""
+        pg = self.page()
+        pg.evaluate("midi.preset = PRESETS[0]; midi.outputs = [{ send() {} }]; window.rx = (...b) => midi.receive(new Uint8Array(b))")
+        pg.evaluate("ctlTest.show()")
+        self.assertTrue(pg.evaluate("document.querySelector('#ctlTest').open"))
+        total = pg.evaluate("ctlTest.items().length")
+        pg.evaluate("rx(0x90, 0x0B, 0x7F); rx(0x90, 0x0B, 0)")                 # deck 1 PLAY
+        pg.evaluate("rx(0xB6, 0x1F, 0x40); rx(0xB6, 0x3F, 0x00)")              # crossfader
+        self.assertEqual(pg.evaluate("ctlTest.seen.size"), 2)
+        self.assertIn(f"2 of {total}", pg.evaluate("document.querySelector('#ctProgress').textContent"))
+        self.assertEqual(pg.evaluate("document.querySelectorAll('.ct-chip.ok').length"), 2)
+        # Jog: touch, 360 ticks forward, release -> half a turn at the FLX4's 720 per turn.
+        pg.evaluate("rx(0x90, 0x36, 0x7F); for (let i = 0; i < 36; i++) rx(0xB0, 0x22, 74); rx(0x90, 0x36, 0)")
+        self.assertIn("360 ticks = 0.50 turns", pg.evaluate("document.querySelector('#ctMeasure').textContent"))
+        # Something tubedeck doesn't know is listed, a button release isn't.
+        pg.evaluate("rx(0xB6, 0x70, 0x10); rx(0x94, 0x47, 0)")
+        self.assertEqual(pg.evaluate("[...ctlTest.unmapped.keys()]"), ["B6 70"])
+        report = pg.evaluate("JSON.parse(ctlTest.report())")
+        self.assertEqual(report["controller"], "Pioneer DDJ-FLX4")
+        self.assertEqual(len(report["tested"]) + len(report["notTested"]), total)
+        self.assertEqual(report["jog"]["1"]["last"], 360)
+        self.assertEqual(self.errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")

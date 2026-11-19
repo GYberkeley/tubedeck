@@ -555,6 +555,16 @@ const PAD_JUMPS = [-1, -4, -16, -32, 1, 4, 16, 32];
 const PAD_ROLLS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4];
 const KEY_PADS = [0, 1, 2, 3, -3, -2, -1, 0];   // semitones, as on the DDJ-FLX4's KEY SHIFT pads
 const TEMPO_RANGES = [6, 8, 16, 50];
+// Keys: tonic 0-11 (C..B) and mode. Camelot: C major = 8B, A minor = 8A, a fifth up is +1.
+const KEY_NAMES = ['C', 'D♭', 'D', 'E♭', 'E', 'F', 'F♯', 'G', 'A♭', 'A', 'B♭', 'B'];
+const camelot = k => `${((k.mode === 'min' ? k.tonic + 3 : k.tonic) * 7 % 12 + 7) % 12 + 1}${k.mode === 'min' ? 'A' : 'B'}`;
+const keyName = k => `${KEY_NAMES[k.tonic]} ${k.mode === 'min' ? 'minor' : 'major'}`;
+// Harmonic mixing: the same Camelot code, one step either way, or its relative major/minor.
+function keysMix(a, b) {
+  const ca = camelot(a), cb = camelot(b), na = parseInt(ca), nb = parseInt(cb);
+  if (ca.slice(-1) === cb.slice(-1)) return na === nb || (na % 12) + 1 === nb || (nb % 12) + 1 === na;
+  return na === nb;
+}
 const LOOP_LENGTHS = [1 / 32, 1 / 16, 1 / 8, 1 / 4, 1 / 2, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512];
 const SECONDS_PER_JOG_TURN = 1.8;
 const decks = {};
@@ -620,6 +630,7 @@ class Deck {
       padGrid: $('.pad-grid', r), loopbox: $('.loopbox', r), loopLen: $('.loop-len', r), au: $('.loop-au', r), ma: $('.loop-ma', r),
       slip: $('.slip', r), quant: $('.quant', r), mt: $('.mt', r),
       stemRow: $('.stem-row', r), stemStatus: $('.stem-status', r), stemBtns: $$('.stem', r),
+      keyVal: $('.key-val', r), keyName: $('.key-name', r),
     };
     this.ui.stemBtns.forEach(b => b.addEventListener('click', () => this.toggleStem(b.dataset.stem)));
     for (let i = 0; i < 8; i++) {
@@ -651,6 +662,10 @@ class Deck {
     this.ui.sync.addEventListener('click', () => (this.synced ? this.unsync() : this.sync()));
     this.ui.masterBtn.addEventListener('click', () => this.makeMaster());
     $('.tap-bpm', r).addEventListener('click', () => this.tap());
+    $('.key-dn', r).addEventListener('click', () => this.setKey(this.keyShift - 1));
+    $('.key-up', r).addEventListener('click', () => this.setKey(this.keyShift + 1));
+    $('.key-reset', r).addEventListener('click', () => this.setKey(0));
+    $('.key-sync', r).addEventListener('click', () => this.keySync());
     $$('.bpm-fix', r).forEach(b => b.addEventListener('click', () => {
       if (!this.bpm) return;
       this.bpm = Math.round(this.bpm * +b.dataset.f * 10) / 10;
@@ -688,7 +703,8 @@ class Deck {
     await this.connect();
     this.el.pause();
     this.track = meta; this.cue = 0; this.hot.fill(null); this.loop = null; this.manualIn = null; this.bpm = 0; this.wave = null; this.overviewImg = null;
-    this.stemsReady = false; this.mixRef = null; this.memReady = false;
+    this.stemsReady = false; this.mixRef = null; this.memReady = false; this.key = null;
+    this.setKey(0);
     this.ui.title.textContent = meta.title || meta.id;
     this.ui.artist.textContent = meta.channel || '';
     this.ui.bpm.textContent = '--.-';
@@ -716,7 +732,8 @@ class Deck {
       if (this.track !== meta) return;
       this.el.load([{ name: 'mix', data: r.pcm }], buf.length);
       this.mixRef = r.ref;
-      this.wave = r.wave; this.bpm = r.bpm; this.firstBeat = r.firstBeat;
+      this.wave = r.wave; this.bpm = r.bpm; this.firstBeat = r.firstBeat; this.key = r.key;
+      this.renderKey();
       this.recall();
       this.setState('');
       this.renderBpm();
@@ -987,7 +1004,35 @@ class Deck {
       c.keyDry.gain.setTargetAtTime(on ? 0 : 1, t, 0.01); c.keyWet.gain.setTargetAtTime(on ? 1 : 0, t, 0.01);
     }
     if (this.mode === 'key') this.renderPads();
-    this.setState(this.keyShift ? `Key ${this.keyShift > 0 ? '+' : ''}${this.keyShift}` : '');
+    this.renderKey();
+  }
+  // The key as heard: detected key moved by the key shift.
+  get liveKey() { return this.key && { tonic: (this.key.tonic + this.keyShift + 120) % 12, mode: this.key.mode }; }
+  renderKey(fromPeer) {
+    if (!this.ui) return;
+    const k = this.liveKey, other = Object.values(decks).find(d => d !== this)?.liveKey;
+    this.ui.keyVal.textContent = k ? camelot(k) : '--';
+    this.ui.keyName.textContent = k ? `${keyName(k)}${this.keyShift ? ` (${this.keyShift > 0 ? '+' : ''}${this.keyShift})` : ''}` : '';
+    this.ui.keyVal.title = k ? keyName(k) : '';
+    this.ui.keyVal.classList.toggle('shifted', !!this.keyShift);
+    this.ui.keyVal.classList.toggle('match', !!(k && other && keysMix(k, other)));
+    if (this.mode === 'key') this.renderPads();
+    if (!fromPeer) for (const d of Object.values(decks)) if (d !== this) d.renderKey(true);   // its match colour depends on this deck
+  }
+  // KEY SYNC: the smallest shift that makes this deck mix harmonically with the other one.
+  // Any compatible key will do (the same Camelot code, a neighbour, or the relative
+  // major/minor), so the shift stays small; ties go to the exact Camelot match.
+  keySync() {
+    const other = Object.values(decks).find(d => d !== this), t = other?.liveKey;
+    if (!this.key || !t) return this.setState('Key sync needs both tracks analysed.');
+    let best = null;
+    for (let s = -6; s <= 6; s++) {
+      const k = { tonic: (this.key.tonic + s + 12) % 12, mode: this.key.mode };
+      if (!keysMix(k, t)) continue;
+      const cost = Math.abs(s) + (parseInt(camelot(k)) === parseInt(camelot(t)) ? 0 : 0.5);
+      if (!best || cost < best.cost) best = { s, cost };
+    }
+    this.setKey(best ? best.s : 0);
   }
   cycleTempoRange() {
     this.tempoRange = TEMPO_RANGES[(TEMPO_RANGES.indexOf(this.tempoRange) + 1) % TEMPO_RANGES.length];
@@ -1721,6 +1766,7 @@ const phones = {
   },
   async fillDevices(ask) {
     const outs = await this.listDevices(ask);
+    this.labels = Object.fromEntries(outs.map(d => [d.deviceId, d.label]));
     for (const [sel, cur] of [[$('#phonesMain'), this.mainId], [$('#phonesDevice'), this.hpId]]) {
       sel.innerHTML = '<option value="">System default</option>' + outs.filter(d => d.deviceId && d.deviceId !== 'default')
         .map(d => `<option value="${escapeHtml(d.deviceId)}">${escapeHtml(d.label || 'Output device')}</option>`).join('');

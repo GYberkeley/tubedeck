@@ -19,11 +19,13 @@ const MODE_BUTTONS = { 0x1B: 'hot', 0x6D: 'loop', 0x20: 'jump', 0x1E: 'roll', 0x
 // The DDJ-1000's Beat FX selector, position by position.
 const DDJ1000_FX = ['delay', 'echo', 'pingpong', 'spiral', 'reverb', 'trans', 'filter', 'flanger', 'phaser', 'pitch', 'roll', 'roll', 'brake', 'helix'];
 const FLX4_KEEPALIVE = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x04, 0x05, 0x00, 0x50, 0x02, 0xF7];
+const DDJ1000_HDR = [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00];
+const DDJ1000_KEEPALIVE = [...DDJ1000_HDR, 0x50, 0x01, 0xF7];
 
 const PRESETS = [
   // Jog resolution in ticks per platter turn, as used by the Mixxx mappings.
   { match: /FLX4/i, name: 'Pioneer DDJ-FLX4', model: 'flx4', ticksPerTurn: 720, keepAlive: FLX4_KEEPALIVE },
-  { match: /DDJ-?1000/i, name: 'Pioneer DDJ-1000', model: '1000', ticksPerTurn: 2048 },
+  { match: /DDJ-?1000/i, name: 'Pioneer DDJ-1000', model: '1000', ticksPerTurn: 2048, keepAlive: DDJ1000_KEEPALIVE },
   { match: /DDJ-?(400|800|SX|SR|RB|REV)/i, name: 'Pioneer DDJ (generic)', model: 'generic', ticksPerTurn: 1024 },
 ];
 
@@ -50,10 +52,13 @@ const midi = {
 
   bind() {
     const ins = [...this.access.inputs.values()];
-    this.outputs = [...this.access.outputs.values()];
+    const outs = [...this.access.outputs.values()];
     for (const i of ins) i.onmidimessage = e => this.receive(e.data);
     const names = ins.map(i => i.name);
     this.preset = PRESETS.find(p => names.some(n => p.match.test(n))) || null;
+    // Lights, keep-alives and the DDJ-1000 handshake go only to the matched controller.
+    this.outputs = this.preset ? outs.filter(o => this.preset.match.test(o.name)) : outs;
+    if (this.preset?.model === '1000') jogScreens.expect();
     clearInterval(this.keepTimer); this.keepTimer = null;
     if (this.preset?.keepAlive && this.access.sysexEnabled) this.keepTimer = setInterval(() => this.send(this.preset.keepAlive), 200);
     this.lit.clear();
@@ -63,11 +68,12 @@ const midi = {
 
   status(msg) { $('#midiStatus').textContent = msg; },
 
-  send(bytes) { for (const o of this.outputs) { try { o.send(bytes); } catch {} } },
+  send(bytes, at) { for (const o of this.outputs) { try { o.send(bytes, at); } catch {} } },
 
   receive(data) {
     const [st, d1 = 0, d2 = 0] = data;
-    if (st >= 0xF0) return;                                  // clock, sysex replies
+    if (st === 0xF0) { const what = jogScreens.sysex(data); if (what) this.monitor(data, what); return; }
+    if (st >= 0xF0) return;                                  // clock and other system messages
     const type = st & 0xF0, ch = st & 0x0F;
     const on = type === 0x90 && d2 > 0;
     // Note-off arrives as 0x80 or as a note-on with velocity 0: treat both as the note's release.
@@ -77,6 +83,7 @@ const midi = {
     const binding = this.learned[key];
     const action = binding ? this.runLearned(binding, kind, d2) : this.preset ? this.pioneer(type === 0x80 ? 0x90 | ch : st, d1, type === 0x80 ? 0 : d2) : '';
     this.monitor(data, action || (binding ? 'learned' : ''));
+    if (typeof ctlTest !== 'undefined') ctlTest.record(data, action || (binding ? 'learned' : ''));
   },
 
   monitor(data, what) {
@@ -121,7 +128,7 @@ const midi = {
       case 0x0B: press(() => d.togglePlay()); return 'play';
       case 0x0C: on ? d.cueDown() : d.cueUp(); return 'cue';
       case 0x58: press(() => (d.synced ? d.unsync() : d.sync())); return 'sync';
-      case 0x5C: if (this.preset?.model === '1000') return 'key sync (needs key detection)';
+      case 0x5C: if (this.preset?.model === '1000') { press(() => d.keySync()); return 'key sync'; }
         press(() => d.makeMaster()); return 'master';
       case 0x60: if (this.preset?.model === '1000') { press(() => d.setKey(0)); return 'key reset'; }
         press(() => d.cycleTempoRange()); return 'tempo range';
@@ -157,7 +164,7 @@ const midi = {
       case 0x5E: case 0x70: d.search(on ? -1 : 0); return 'search back';
       case 0x5F: case 0x71: d.search(on ? 1 : 0); return 'search forward';
       case 0x64: press(() => d.setKey(0)); return 'key reset';
-      case 0x65: return 'key sync (needs key detection)';
+      case 0x65: press(() => d.keySync()); return 'key sync';
       default:
         if (this.preset?.model === '1000' && (n <= 0x09 || n >= 0x7A)) {
           press(() => sampler.setBank(sampler.bank + (n >= 0x01 && n <= 0x08 ? -1 : 1))); return 'sampler bank';
@@ -276,6 +283,8 @@ const midi = {
   // ---------- lights ----------
   lights() {
     if (!this.preset || !this.outputs.length) return;
+    // rekordbox sends a DDJ-1000 nothing but the keep-alive until it has unlocked it.
+    if (this.preset.model === '1000' && !jogScreens.quiet()) return;
     const want = new Map();
     ['A', 'B'].forEach((L, ch) => {
       const d = decks[L], loaded = !!d.track;
@@ -354,6 +363,155 @@ const midi = {
   },
 };
 
+// ---------- DDJ-1000 jog screens ----------
+// The jog screens stay on "NO AUDIO DRIVER" until the software passes a challenge over
+// SysEx, while the unit's own sound card is playing and its vendor HID interface is
+// held open. Written from the protocol as documented by the pioneered-by-ntamas project
+// (USB captures of rekordbox) and Swiftb0y's CDJHidProtocol research:
+//   unit 11 02 "who are you?"  ->  host 12 <identity: manufacturer, product, seed>
+//   unit 13 .. 03 <seed>       ->  host 14 <capabilities: ..., 04 <hash>, 05 <device id>>
+//   unit 15 02 ACK             ->  unlocked; the host brings the displays up
+// Arguments are TLV (tag, length incl. header, payload); hash and seeds travel as nibbles.
+// rekordbox's own post-unlock burst, recorded by the pioneered-by-ntamas project (GPL-3.0).
+// Replaying it whole is what takes the screens out of the locked state; a shortened
+// version didn't. It is fetched (never bundled) from a pinned commit and must match
+// this SHA-256, or the shortened bring-up is used instead.
+const DDJ1000_BURST_URL = 'https://raw.githubusercontent.com/ntamas94/pioneered-by-ntamas/8eca76879a6401d77da81e54dadf5699de7e066f/ddj1000-linux/bridge/ddj1000-post-auth-midi.txt';
+const DDJ1000_BURST_SHA256 = '1f314a2330e75953b0ee747d814d5e5034671fabe6294e6144046505ac41c62a';
+
+const jogScreens = {
+  state: 'idle', pending: false, hid: null, since: 0, log: [], burst: null,
+  IDENT: { manufacturer: 'PioneerDJ', product: 'rekordbox', secret: 0x680131FB },
+  SEED_A: [0x6, 0x8, 0x7, 0x2, 0xB, 0xA, 0x3, 0x2, 0xD, 0x4, 0x0, 0x7, 0xC, 0x0, 0xE, 0x1],
+  DEVICE_ID: [0x8, 0x7, 0xA, 0x0, 0x8, 0xE, 0xE, 0xA, 0xC, 0x0, 0x9, 0x0, 0x3, 0x4, 0x7, 0x6, 0x0, 0xB, 0x9, 0x0],
+  fnv1a(bytes) { let h = 0x811C9DC5; for (const b of bytes) { h ^= b; h = Math.imul(h, 0x01000193) >>> 0; } return h >>> 0; },
+  u32(n) { return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]; },
+  spread(bytes) { return bytes.flatMap(b => [(b >> 4) & 15, b & 15]); },
+  pack(nibbles) { const out = []; for (let i = 0; i + 1 < nibbles.length; i += 2) out.push((nibbles[i] << 4) | nibbles[i + 1]); return out; },
+  ascii(s) { return [...s].map(c => c.charCodeAt(0)); },
+  tlv(tag, payload) { return [tag, payload.length + 2, ...payload]; },
+  msg(cmd, body) { return [...DDJ1000_HDR, cmd, body.length + 2, ...body, 0xF7]; },
+  response(seed) {
+    const s = (((seed[0] << 24) | (seed[1] << 16) | (seed[2] << 8) | seed[3]) ^ this.IDENT.secret) >>> 0;
+    return this.u32(this.fnv1a([...seed, ...this.u32(s)]));
+  },
+  identity() {
+    return this.msg(0x12, [...this.tlv(0x01, this.ascii(this.IDENT.manufacturer)), ...this.tlv(0x02, this.ascii(this.IDENT.product)), ...this.tlv(0x03, this.SEED_A)]);
+  },
+  capabilities(seed) {
+    return this.msg(0x14, [...this.tlv(0x01, this.ascii(this.IDENT.manufacturer)), ...this.tlv(0x02, this.ascii(this.IDENT.product)),
+      ...this.tlv(0x04, this.spread(this.response(seed))), ...this.tlv(0x05, this.DEVICE_ID)]);
+  },
+  arg(m, tag) {
+    for (let i = 11; i + 1 < m.length - 1;) { const t = m[i], n = m[i + 1]; if (n < 2) return null; if (t === tag) return m.slice(i + 2, i + n); i += n; }
+    return null;
+  },
+  // The unit only unlocks while a driver is streaming to it, so the first challenge is
+  // held until tubedeck is playing out of the DDJ's own sound card (it asks once).
+  audioReady() {
+    if (!ctx || ctx.state !== 'running' || phones.mode !== 'quad') return false;
+    // Chrome hides device names until asked, so a 4+ output device counts too.
+    return /DDJ|Pioneer/i.test(phones.labels?.[phones.mainId] || '') || ctx.destination.maxChannelCount >= 4;
+  },
+  sysex(data) {
+    const m = [...data];
+    if (midi.preset?.model !== '1000' || !DDJ1000_HDR.every((b, i) => m[i] === b) || m.length < 11) return '';
+    const cmd = m[9], sub = m[10];
+    if (cmd === 0x11 && sub === 0x02) {
+      if (this.state !== 'waiting') { this.since = performance.now(); this.bringing = false; }   // a new USB session
+      if (!this.audioReady() && performance.now() - this.since < 90000) {
+        this.pending = true; this.set('waiting', 'The DDJ-1000 asked to unlock its screens. Set Headphones to "DJ controller sound card" with the DDJ-1000 as the main output; tubedeck answers once it plays through it.');
+        return 'jog screens: challenge (waiting for DDJ audio)';
+      }
+      this.answer(); return 'jog screens: identity sent';
+    }
+    if (cmd === 0x13) {
+      const seed = this.arg(m, 0x03);
+      if (!seed || seed.length < 8) return 'jog screens: challenge without a seed';
+      midi.send(this.capabilities(this.pack(seed.slice(0, 8))));
+      this.set('answering', 'Answering the DDJ-1000…');
+      return 'jog screens: challenge answered';
+    }
+    if (cmd === 0x15 && sub === 0x02) {
+      this.set('unlocked', 'Jog screens unlocked.');
+      this.bringUp();
+      return 'jog screens: unlocked';
+    }
+    return `jog screens: message ${cmd.toString(16)}`;
+  },
+  // Just connected: the unit challenges within a few seconds of being plugged in. No
+  // challenge in 8 s means it unlocked earlier this USB session (or never will).
+  async loadBurst() {
+    if (this.burst || this.loadingBurst) return this.loadingBurst;
+    this.loadingBurst = (async () => {
+      try {
+        const buf = await (await fetch(DDJ1000_BURST_URL, { cache: 'force-cache' })).arrayBuffer();
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join('');
+        if (hash !== DDJ1000_BURST_SHA256) throw new Error('the file has changed');
+        const msgs = new TextDecoder().decode(buf).split('\n').map(l => l.trim()).filter(Boolean)
+          .map(l => { if (!/^([0-9a-f]{2})+$/.test(l)) throw new Error('unexpected line'); return l.match(/../g).map(h => parseInt(h, 16)); });
+        if (!msgs.every(m => m[0] >= 0x80 && (m[0] !== 0xF0 || m[m.length - 1] === 0xF7))) throw new Error('not MIDI');
+        this.burst = msgs; this.note(`loaded rekordbox's bring-up (${msgs.length} messages)`);
+      } catch (e) { this.note(`couldn't load rekordbox's bring-up (${e.message}); using the short one`); }
+    })();
+    return this.loadingBurst;
+  },
+  expect() {
+    this.loadBurst();
+    if (this.state === 'unlocked' || this.state === 'waiting' || this.state === 'answering') return;
+    this.set('expecting', 'Waiting for the DDJ-1000 to ask (it does right after it is plugged in)…');
+    clearTimeout(this.expectTimer);
+    this.expectTimer = setTimeout(() => { if (this.state === 'expecting') this.set('idle', 'No unlock request. Replug the DDJ-1000 with tubedeck open to unlock its screens.'); }, 8000);
+  },
+  quiet() { return !this.bursting && (this.state === 'unlocked' || this.state === 'idle' || this.state === 'failed'); },
+  answer() { this.pending = false; midi.send(this.identity()); this.set('answering', 'Answering the DDJ-1000…'); },
+  poll() { if (this.pending && (this.audioReady() || performance.now() - this.since > 90000)) this.answer(); },
+  // What rekordbox sends once the unit accepts: display state, then screens on per deck.
+  bringUp() {
+    if (this.bringing) return;
+    this.bringing = true;
+    const sx = hex => midi.send([...DDJ1000_HDR, ...hex.match(/../g).map(h => parseInt(h, 16)), 0xF7]);
+    setTimeout(() => {
+      ['000b2b68000000', '000c0000020e0e000000', '000a00280026000a394a742853202014152205' + '00'.repeat(21)].forEach(sx);
+      setTimeout(async () => {
+        // Settings rekordbox applies on the unit: PC app connect, demo mode off, LCD and ring brightness.
+        for (const m of [[0x9F, 0x09, 0x7F], [0xBF, 0x44, 0x00], [0xBF, 0x48, 0x40], [0xBF, 0x46, 0x30]]) midi.send(m);
+        await this.loadBurst();
+        if (this.burst) {
+          const t0 = performance.now() + 5;
+          this.bursting = true;                    // lights wait until it has all gone out
+          this.burst.forEach((m, i) => midi.send(m, t0 + i * 2.4));
+          setTimeout(() => { this.bursting = false; midi.lit.clear(); }, this.burst.length * 2.4 + 50);   // then resend every light
+          this.note('sent rekordbox\'s bring-up');
+          return;
+        }
+        ['000a002800260024153255481421' + '00'.repeat(26), '000b3560140100', '000c0000020e0e000000'].forEach(sx);
+        for (const h of ['9f407f', '9f4100', '9f427f', 'bf4630', 'bf4100', 'bf4200', 'bf4300', 'bf4430', 'bf4720', 'bf4840', 'bf4910', 'bf4a20'])
+          midi.send(h.match(/../g).map(x => parseInt(x, 16)));
+        for (let ch = 0; ch < 4; ch++) for (const note of [0x0B, 0x47, 0x0C, 0x50]) midi.send([0x90 | ch, note, 0x00]);
+        ['000b310000000000', '000a002800260028490a64691400' + '00'.repeat(26), '000b310000000000', '000c0000020e0e000000'].forEach(sx);
+        for (let ch = 0; ch < 4; ch++) { midi.send([0x90 | ch, 0x5B, 0x01]); midi.send([0x90 | ch, 0x5D, 0x00]); }   // ring light, screen on
+        midi.lit.clear();   // the burst switched some buttons off: resend every light
+      }, 1050);
+    }, 20);
+  },
+  // The unit also wants its vendor HID interface held open by "a driver" (Chrome: WebHID).
+  async openHid() {
+    if (!navigator.hid) return this.set(this.state, "This browser can't open the controller's HID interface (use Chrome or Edge).");
+    try {
+      const [dev] = (await navigator.hid.getDevices()).filter(d => d.vendorId === 0x2B73 && d.productId === 0x0020).concat(
+        await navigator.hid.requestDevice({ filters: [{ vendorId: 0x2B73, productId: 0x0020 }] }));
+      if (!dev) return;
+      if (!dev.opened) await dev.open();
+      this.hid = dev;
+      dev.addEventListener('inputreport', e => this.note(`hid in ${e.reportId}: ${[...new Uint8Array(e.data.buffer)].slice(0, 12).map(b => b.toString(16).padStart(2, '0')).join(' ')}`));
+      this.set(this.state, `HID interface open (${dev.productName}). Now unplug and replug the DDJ-1000 so it asks again.`);
+    } catch (e) { this.set(this.state, `Couldn't open the HID interface: ${e.message}`); }
+  },
+  note(s) { this.log.unshift(s); this.log.length = Math.min(this.log.length, 6); },
+  set(state, msg) { this.state = state; const el = $('#jogStatus'); if (el) el.textContent = msg; this.note(`${state}: ${msg}`); },
+};
+
 // A selector that finds the same control after a reload (the layout is static).
 function cssPath(el) {
   const parts = [];
@@ -371,4 +529,5 @@ $('#midiLearn').addEventListener('click', () => (midi.access ? midi.startLearn()
 $('#midiClear').addEventListener('click', () => { midi.learned = {}; store.set('midiMap', '{}'); flash('Learned controls cleared.'); });
 if (!midi.supported) midi.status(navigator.requestMIDIAccess ? 'Open http://localhost:8765 on the helper computer to use a controller.' : "This browser can't use MIDI controllers.");
 else if (store.get('midi') === 'on') midi.connect(true);
-setInterval(() => midi.lights(), 100);
+setInterval(() => { midi.lights(); jogScreens.poll(); }, 100);
+$('#jogHid')?.addEventListener('click', () => jogScreens.openHid());
