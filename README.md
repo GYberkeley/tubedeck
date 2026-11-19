@@ -24,6 +24,7 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 ## What it does
 
 - **Two decks:** waveform overview and scrolling waveforms, Pioneer-style CUE, play/pause, a jog wheel you can scratch, tempo ±8% with key lock, automatic BPM detection (with ½ and ×2 fixes), TAP, SYNC and MASTER.
+- **Key:** every track's key is detected and shown in Camelot (e.g. 8A) and musical notation; it turns green when it mixes well with the other deck. − / + / 0 shift a deck's key by semitones without changing its tempo, and key SYNC moves it the shortest distance to a harmonically compatible key.
 - **Cues and loops:** 8 hot cues, beat loops from 1/32 to 512 beats (pads cover 1/4 to 32), manual loop in/out, beat jump, slip mode and ROLL.
 - **Pads:** hot cue, beat loop, beat jump, roll, a sampler with 16 built-in sounds, and key shift.
 - **Mixer:** trim, 3-band EQ, Color FX (filter, space, dub echo, sweep, noise, crush, jet, pitch), channel faders with meters and an equal-power crossfader.
@@ -161,7 +162,7 @@ Open the app in **Chrome or Edge on a computer**, at `http://localhost:8765` or 
   - **Browser:** browse, load to either deck, switch between results and collection, and waveform zoom (FLX4).
   - **Lights:** play, cue, sync, CUE, loops, pads, FX and the channel level meters follow the app.
   - **DDJ-1000 jog screens (experimental, stage 1):** tubedeck answers the unit's unlock handshake so the screens leave "NO AUDIO DRIVER". Play through the DDJ-1000's sound card (Headphones → DJ controller sound card), click **Open DDJ-1000 HID** in Settings, then replug the controller. After unlocking it replays rekordbox's recorded start-up burst, fetched from a pinned commit of the pioneered-by-ntamas project and checked against its SHA-256 (it is never bundled here). Drawing the playhead, waveform and artwork is the next stage.
-  - Key sync isn't supported (it needs key detection). Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
+  - Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
 - **Any other MIDI controller:** click **MIDI learn**, click a control on screen, then move or press it on the controller. Learned controls are saved in the browser and win over the built-in mapping.
 - The Settings panel shows a live list of incoming MIDI messages, which helps when something doesn't respond.
 
@@ -241,7 +242,7 @@ Pioneer DDJ controllers share one message scheme, handled by `pioneer()` and the
 
 ```bash
 python3 -m unittest discover -s tests     # helper, against a fake yt-dlp and Demucs (offline)
-node --test tests/test_dsp.js             # deck audio engine
+node --test tests/test_dsp.js tests/test_analysis.js   # deck audio engine, key detection
 python3 -W ignore tests/browser_smoke.py  # the web app in headless Chrome
 ruff check .                              # Python lint
 ```

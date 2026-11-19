@@ -702,6 +702,30 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(self.errors, [])
         pg.close()
 
+    def test_key_detection_and_shift(self):
+        """Each track gets a detected key; − / + / reset shift it and SYNC matches the other deck harmonically."""
+        pg = self.page()
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.key", timeout=30000)
+        self.assertRegex(pg.evaluate("document.querySelector('.deck[data-deck=A] .key-val').textContent"), r"^(1[0-2]|[1-9])[AB]$")
+        pg.click(".deck[data-deck=A] .key-up")
+        pg.click(".deck[data-deck=A] .key-up")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 2)
+        self.assertTrue(pg.evaluate("document.querySelector('.deck[data-deck=A] .key-val').classList.contains('shifted')"))
+        pg.click(".deck[data-deck=A] .key-reset")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 0)
+        # Key sync against a known key on the other deck: A minor (8A) vs C major (8B) = no shift needed.
+        pg.evaluate("decks.A.key = { tonic: 9, mode: 'min' }; decks.B.key = { tonic: 0, mode: 'maj' }; decks.A.keySync()")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 0)
+        pg.evaluate("decks.A.key = { tonic: 2, mode: 'maj' }; decks.A.keySync()")             # D major (10B) -> C major, 2 down
+        self.assertTrue(pg.evaluate("keysMix(decks.A.liveKey, decks.B.liveKey)"))
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), -2)
+        # The DDJ-1000's KEY SYNC button does the same.
+        pg.evaluate("decks.A.setKey(0); midi.preset = PRESETS[1]; midi.pioneer(0x90, 0x65, 0x7F)")
+        self.assertTrue(pg.evaluate("keysMix(decks.A.liveKey, decks.B.liveKey)"))
+        self.assertEqual(self.errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")

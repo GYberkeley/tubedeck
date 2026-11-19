@@ -127,7 +127,7 @@ const midi = {
       case 0x0B: press(() => d.togglePlay()); return 'play';
       case 0x0C: on ? d.cueDown() : d.cueUp(); return 'cue';
       case 0x58: press(() => (d.synced ? d.unsync() : d.sync())); return 'sync';
-      case 0x5C: if (this.preset?.model === '1000') return 'key sync (needs key detection)';
+      case 0x5C: if (this.preset?.model === '1000') { press(() => d.keySync()); return 'key sync'; }
         press(() => d.makeMaster()); return 'master';
       case 0x60: if (this.preset?.model === '1000') { press(() => d.setKey(0)); return 'key reset'; }
         press(() => d.cycleTempoRange()); return 'tempo range';
@@ -163,7 +163,7 @@ const midi = {
       case 0x5E: case 0x70: d.search(on ? -1 : 0); return 'search back';
       case 0x5F: case 0x71: d.search(on ? 1 : 0); return 'search forward';
       case 0x64: press(() => d.setKey(0)); return 'key reset';
-      case 0x65: return 'key sync (needs key detection)';
+      case 0x65: press(() => d.keySync()); return 'key sync';
       default:
         if (this.preset?.model === '1000' && (n <= 0x09 || n >= 0x7A)) {
           press(() => sampler.setBank(sampler.bank + (n >= 0x01 && n <= 0x08 ? -1 : 1))); return 'sampler bank';

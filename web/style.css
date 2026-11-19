@@ -307,3 +307,16 @@ body.dropping .deck.drop-target { outline: 2px dashed #ffcf6b; background-color:
 .rec-btn.on { background: #c62828; border-color: transparent; color: #fff; animation: recPulse 1.6s ease-in-out infinite; }
 @keyframes recPulse { 50% { box-shadow: 0 0 0 4px #c6282844; } }
 @media (prefers-reduced-motion: reduce) { .rec-btn.on { animation: none; } }
+
+/* Key: Camelot code, musical name, shift and sync (on the artist line) */
+.title-sub { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.title-sub .artist { flex: 0 1 auto; min-width: 0; }
+.deck-key { display: flex; align-items: center; gap: 5px; flex: none; }
+.key-val { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--text); }
+.key-val.shifted { color: var(--c); }
+.key-val.match { color: #4cd964; }
+.key-name { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.key-btns { display: flex; gap: 2px; }
+.key-btns button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; font-size: 9px; padding: 0 4px; color: var(--muted); min-width: 16px; line-height: 14px; }
+.deck-title { container-type: inline-size; overflow: hidden; }
+@container (max-width: 250px) { .key-name { display: none; } .title-sub .artist:empty { display: none; } }

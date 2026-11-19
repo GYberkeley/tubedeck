@@ -171,6 +171,45 @@ function alignOffset(mix, stems, maxLag = 4096) {
   return best;
 }
 
+// Musical key: a chromagram (spectral energy folded into 12 pitch classes over the
+// track) correlated with the 24 major/minor key profiles. The profiles are Temperley's,
+// as tuned for electronic music in KeyFinder. Returns the tonic (0 = C) and mode.
+const KEY_MAJOR = [7.24, 3.50, 3.58, 2.85, 5.82, 4.56, 2.45, 6.99, 3.39, 4.56, 4.07, 4.38];
+const KEY_MINOR = [7.00, 3.14, 4.36, 5.40, 3.67, 4.09, 3.91, 6.20, 3.63, 2.87, 5.35, 3.83];
+function detectKey(buf) {
+  const sr = buf.sampleRate, ch0 = buf.getChannelData(0), ch1 = buf.numberOfChannels > 1 ? buf.getChannelData(1) : ch0;
+  // Mono at ~5.5 kHz (box-filtered on the way down): enough for the 55-1760 Hz range used.
+  const dec = Math.max(1, Math.round(sr / 5512)), sr2 = sr / dec, m = Math.floor(Math.min(ch0.length, sr * MAX_ANALYSIS_SECONDS) / dec);
+  const x = new Float32Array(m);
+  for (let i = 0; i < m; i++) { let s = 0; for (let k = i * dec, e = k + dec; k < e; k++) s += ch0[k] + ch1[k]; x[i] = s / (2 * dec); }
+  const N = 8192, hop = 4096, frames = Math.max(1, Math.floor((m - N) / hop) + 1), step = Math.max(1, Math.floor(frames / 400));
+  const win = new Float32Array(N); for (let i = 0; i < N; i++) win[i] = 0.5 - 0.5 * Math.cos(2 * Math.PI * i / N);
+  // Each FFT bin belongs to the nearest pitch class (55 Hz .. 1760 Hz: A1 to A6).
+  const pc = new Int8Array(N / 2).fill(-1);
+  for (let b = 1; b < N / 2; b++) { const f = b * sr2 / N; if (f >= 55 && f <= 1760) pc[b] = ((Math.round(12 * Math.log2(f / 440)) + 69) % 12 + 12) % 12; }
+  const chroma = new Float64Array(12), re = new Float32Array(N), im = new Float32Array(N), c = new Float64Array(12);
+  for (let fr = 0; fr < frames && fr * hop + N <= m; fr += step) {
+    for (let i = 0; i < N; i++) { re[i] = x[fr * hop + i] * win[i]; im[i] = 0; }
+    fft(re, im);
+    c.fill(0);
+    for (let b = 1; b < N / 2; b++) if (pc[b] >= 0) c[pc[b]] += Math.sqrt(re[b] * re[b] + im[b] * im[b]);
+    const sum = c.reduce((a, v) => a + v, 0);
+    if (sum > 1e-6) for (let k = 0; k < 12; k++) chroma[k] += c[k] / sum;   // every frame counts equally
+  }
+  const corr = (prof, t) => {
+    let mx = 0, my = 0; for (let k = 0; k < 12; k++) { mx += chroma[k]; my += prof[k]; } mx /= 12; my /= 12;
+    let sxy = 0, sxx = 0, syy = 0;
+    for (let k = 0; k < 12; k++) { const a = chroma[(k + t) % 12] - mx, b = prof[k] - my; sxy += a * b; sxx += a * a; syy += b * b; }
+    return sxx && syy ? sxy / Math.sqrt(sxx * syy) : 0;
+  };
+  let best = { tonic: 0, mode: 'maj', score: -2 }, second = -2;
+  for (let t = 0; t < 12; t++) for (const [mode, prof] of [['maj', KEY_MAJOR], ['min', KEY_MINOR]]) {
+    const s = corr(prof, t);
+    if (s > best.score) { second = best.score; best = { tonic: t, mode, score: s }; } else if (s > second) second = s;
+  }
+  return { tonic: best.tonic, mode: best.mode, confidence: Math.max(0, best.score - second) };
+}
+
 const asBuffer = (ch0, ch1, sr) => ({ sampleRate: sr, numberOfChannels: 2, getChannelData: i => (i ? ch1 : ch0) });
 
 if (typeof document === 'undefined' && typeof self !== 'undefined' && typeof importScripts === 'function') {
@@ -180,6 +219,7 @@ if (typeof document === 'undefined' && typeof self !== 'undefined' && typeof imp
       const buf = asBuffer(ch0, ch1, sr);
       out.wave = waveform(buf);
       Object.assign(out, detectBeats(buf));
+      out.key = detectKey(buf);
     }
     if (m.type === 'analyze' || m.type === 'pcm') {
       out.pcm = toInt16(ch0, ch1);
@@ -192,3 +232,5 @@ if (typeof document === 'undefined' && typeof self !== 'undefined' && typeof imp
     if (m.type === 'align') { out.offset = alignOffset(m.mix, m.stems); self.postMessage(out); }
   };
 }
+
+if (typeof module !== 'undefined') module.exports = { detectKey, detectBeats, waveform };
