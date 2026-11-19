@@ -83,6 +83,7 @@ const midi = {
     const binding = this.learned[key];
     const action = binding ? this.runLearned(binding, kind, d2) : this.preset ? this.pioneer(type === 0x80 ? 0x90 | ch : st, d1, type === 0x80 ? 0 : d2) : '';
     this.monitor(data, action || (binding ? 'learned' : ''));
+    if (typeof ctlTest !== 'undefined') ctlTest.record(data, action || (binding ? 'learned' : ''));
   },
 
   monitor(data, what) {

@@ -165,6 +165,7 @@ Open the app in **Chrome or Edge on a computer**, at `http://localhost:8765` or 
   - Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
 - **Any other MIDI controller:** click **MIDI learn**, click a control on screen, then move or press it on the controller. Learned controls are saved in the browser and win over the built-in mapping.
 - The Settings panel shows a live list of incoming MIDI messages, which helps when something doesn't respond.
+- **Test controller** (in Settings) opens a checklist of every control on your model. Touch each one on the hardware and it turns green; anything tubedeck didn't handle is listed, and it measures jog ticks per turn and the tempo fader direction. **Copy results** puts the whole report on the clipboard to share when reporting a problem.
 
 The mappings haven't been checked on real hardware yet. The things most likely to need tuning are jog sensitivity (especially on the DDJ-1000) and the tempo fader direction.
 

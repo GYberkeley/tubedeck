@@ -225,6 +225,26 @@
   <div class="ch-label"></div>
 </template>
 
+<dialog id="ctlTest" class="ct">
+  <form method="dialog">
+    <h2>Controller test</h2>
+    <p class="hint">Touch every control on the controller once: each one turns green here when tubedeck receives it. Then copy the results and send them over.</p>
+    <p id="ctProgress" class="ct-progress"></p>
+    <div id="ctGrid" class="ct-grid"></div>
+    <h3>Measurements</h3>
+    <p class="hint">Jog: touch the top of a jog, turn it exactly one full turn, let go. Tempo: move each tempo fader to the top, then to the bottom (pulling it toward you should read +).</p>
+    <ul id="ctMeasure" class="ct-measure"></ul>
+    <h3>Messages tubedeck didn't handle</h3>
+    <p id="ctUnmapped" class="ct-unmapped">None so far.</p>
+    <textarea id="ctReport" class="ct-report" hidden readonly></textarea>
+    <div class="dialog-actions">
+      <button id="ctReset" type="button" class="btn">Start over</button>
+      <button id="ctCopy" type="button" class="btn">Copy results</button>
+      <button value="close" class="btn primary">Done</button>
+    </div>
+  </form>
+</dialog>
+
 <dialog id="settings">
   <form method="dialog">
     <h2>Settings</h2>
@@ -275,6 +295,7 @@
         <button id="midiConnect" type="button" class="btn">Connect controller</button>
         <button id="midiLearn" type="button" class="btn">MIDI learn</button>
         <button id="midiClear" type="button" class="btn">Clear learned</button>
+        <button id="ctOpen" type="button" class="btn">Test controller</button>
       </div>
       <pre id="midiMonitor" class="midi-monitor" aria-live="off"></pre>
       <p class="hint"><b>DDJ-1000 jog screens (experimental):</b> <span id="jogStatus">Not started.</span></p>
@@ -296,5 +317,6 @@
 <script src="worlds.js"></script>
 <script src="app.js"></script>
 <script src="midi.js"></script>
+<script src="ctltest.js"></script>
 </body>
 </html>

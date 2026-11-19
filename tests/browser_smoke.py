@@ -726,6 +726,31 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(self.errors, [])
         pg.close()
 
+    def test_controller_test_page(self):
+        """The controller test ticks controls as they arrive, measures the jog, lists unhandled messages and reports it all."""
+        pg = self.page()
+        pg.evaluate("midi.preset = PRESETS[0]; midi.outputs = [{ send() {} }]; window.rx = (...b) => midi.receive(new Uint8Array(b))")
+        pg.evaluate("ctlTest.show()")
+        self.assertTrue(pg.evaluate("document.querySelector('#ctlTest').open"))
+        total = pg.evaluate("ctlTest.items().length")
+        pg.evaluate("rx(0x90, 0x0B, 0x7F); rx(0x90, 0x0B, 0)")                 # deck 1 PLAY
+        pg.evaluate("rx(0xB6, 0x1F, 0x40); rx(0xB6, 0x3F, 0x00)")              # crossfader
+        self.assertEqual(pg.evaluate("ctlTest.seen.size"), 2)
+        self.assertIn(f"2 of {total}", pg.evaluate("document.querySelector('#ctProgress').textContent"))
+        self.assertEqual(pg.evaluate("document.querySelectorAll('.ct-chip.ok').length"), 2)
+        # Jog: touch, 360 ticks forward, release -> half a turn at the FLX4's 720 per turn.
+        pg.evaluate("rx(0x90, 0x36, 0x7F); for (let i = 0; i < 36; i++) rx(0xB0, 0x22, 74); rx(0x90, 0x36, 0)")
+        self.assertIn("360 ticks = 0.50 turns", pg.evaluate("document.querySelector('#ctMeasure').textContent"))
+        # Something tubedeck doesn't know is listed, a button release isn't.
+        pg.evaluate("rx(0xB6, 0x70, 0x10); rx(0x94, 0x47, 0)")
+        self.assertEqual(pg.evaluate("[...ctlTest.unmapped.keys()]"), ["B6 70"])
+        report = pg.evaluate("JSON.parse(ctlTest.report())")
+        self.assertEqual(report["controller"], "Pioneer DDJ-FLX4")
+        self.assertEqual(len(report["tested"]) + len(report["notTested"]), total)
+        self.assertEqual(report["jog"]["1"]["last"], 360)
+        self.assertEqual(self.errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
