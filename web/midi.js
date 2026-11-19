@@ -68,7 +68,7 @@ const midi = {
 
   status(msg) { $('#midiStatus').textContent = msg; },
 
-  send(bytes) { for (const o of this.outputs) { try { o.send(bytes); } catch {} } },
+  send(bytes, at) { for (const o of this.outputs) { try { o.send(bytes, at); } catch {} } },
 
   receive(data) {
     const [st, d1 = 0, d2 = 0] = data;
@@ -371,8 +371,15 @@ const midi = {
 //   unit 13 .. 03 <seed>       ->  host 14 <capabilities: ..., 04 <hash>, 05 <device id>>
 //   unit 15 02 ACK             ->  unlocked; the host brings the displays up
 // Arguments are TLV (tag, length incl. header, payload); hash and seeds travel as nibbles.
+// rekordbox's own post-unlock burst, recorded by the pioneered-by-ntamas project (GPL-3.0).
+// Replaying it whole is what takes the screens out of the locked state; a shortened
+// version didn't. It is fetched (never bundled) from a pinned commit and must match
+// this SHA-256, or the shortened bring-up is used instead.
+const DDJ1000_BURST_URL = 'https://raw.githubusercontent.com/ntamas94/pioneered-by-ntamas/8eca76879a6401d77da81e54dadf5699de7e066f/ddj1000-linux/bridge/ddj1000-post-auth-midi.txt';
+const DDJ1000_BURST_SHA256 = '1f314a2330e75953b0ee747d814d5e5034671fabe6294e6144046505ac41c62a';
+
 const jogScreens = {
-  state: 'idle', pending: false, hid: null, since: 0, log: [],
+  state: 'idle', pending: false, hid: null, since: 0, log: [], burst: null,
   IDENT: { manufacturer: 'PioneerDJ', product: 'rekordbox', secret: 0x680131FB },
   SEED_A: [0x6, 0x8, 0x7, 0x2, 0xB, 0xA, 0x3, 0x2, 0xD, 0x4, 0x0, 0x7, 0xC, 0x0, 0xE, 0x1],
   DEVICE_ID: [0x8, 0x7, 0xA, 0x0, 0x8, 0xE, 0xE, 0xA, 0xC, 0x0, 0x9, 0x0, 0x3, 0x4, 0x7, 0x6, 0x0, 0xB, 0x9, 0x0],
@@ -433,13 +440,29 @@ const jogScreens = {
   },
   // Just connected: the unit challenges within a few seconds of being plugged in. No
   // challenge in 8 s means it unlocked earlier this USB session (or never will).
+  async loadBurst() {
+    if (this.burst || this.loadingBurst) return this.loadingBurst;
+    this.loadingBurst = (async () => {
+      try {
+        const buf = await (await fetch(DDJ1000_BURST_URL, { cache: 'force-cache' })).arrayBuffer();
+        const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', buf))].map(b => b.toString(16).padStart(2, '0')).join('');
+        if (hash !== DDJ1000_BURST_SHA256) throw new Error('the file has changed');
+        const msgs = new TextDecoder().decode(buf).split('\n').map(l => l.trim()).filter(Boolean)
+          .map(l => { if (!/^([0-9a-f]{2})+$/.test(l)) throw new Error('unexpected line'); return l.match(/../g).map(h => parseInt(h, 16)); });
+        if (!msgs.every(m => m[0] >= 0x80 && (m[0] !== 0xF0 || m[m.length - 1] === 0xF7))) throw new Error('not MIDI');
+        this.burst = msgs; this.note(`loaded rekordbox's bring-up (${msgs.length} messages)`);
+      } catch (e) { this.note(`couldn't load rekordbox's bring-up (${e.message}); using the short one`); }
+    })();
+    return this.loadingBurst;
+  },
   expect() {
+    this.loadBurst();
     if (this.state === 'unlocked' || this.state === 'waiting' || this.state === 'answering') return;
     this.set('expecting', 'Waiting for the DDJ-1000 to ask (it does right after it is plugged in)…');
     clearTimeout(this.expectTimer);
     this.expectTimer = setTimeout(() => { if (this.state === 'expecting') this.set('idle', 'No unlock request. Replug the DDJ-1000 with tubedeck open to unlock its screens.'); }, 8000);
   },
-  quiet() { return this.state === 'unlocked' || this.state === 'idle' || this.state === 'failed'; },
+  quiet() { return !this.bursting && (this.state === 'unlocked' || this.state === 'idle' || this.state === 'failed'); },
   answer() { this.pending = false; midi.send(this.identity()); this.set('answering', 'Answering the DDJ-1000…'); },
   poll() { if (this.pending && (this.audioReady() || performance.now() - this.since > 90000)) this.answer(); },
   // What rekordbox sends once the unit accepts: display state, then screens on per deck.
@@ -449,9 +472,18 @@ const jogScreens = {
     const sx = hex => midi.send([...DDJ1000_HDR, ...hex.match(/../g).map(h => parseInt(h, 16)), 0xF7]);
     setTimeout(() => {
       ['000b2b68000000', '000c0000020e0e000000', '000a00280026000a394a742853202014152205' + '00'.repeat(21)].forEach(sx);
-      setTimeout(() => {
+      setTimeout(async () => {
         // Settings rekordbox applies on the unit: PC app connect, demo mode off, LCD and ring brightness.
         for (const m of [[0x9F, 0x09, 0x7F], [0xBF, 0x44, 0x00], [0xBF, 0x48, 0x40], [0xBF, 0x46, 0x30]]) midi.send(m);
+        await this.loadBurst();
+        if (this.burst) {
+          const t0 = performance.now() + 5;
+          this.bursting = true;                    // lights wait until it has all gone out
+          this.burst.forEach((m, i) => midi.send(m, t0 + i * 2.4));
+          setTimeout(() => { this.bursting = false; midi.lit.clear(); }, this.burst.length * 2.4 + 50);   // then resend every light
+          this.note('sent rekordbox\'s bring-up');
+          return;
+        }
         ['000a002800260024153255481421' + '00'.repeat(26), '000b3560140100', '000c0000020e0e000000'].forEach(sx);
         for (const h of ['9f407f', '9f4100', '9f427f', 'bf4630', 'bf4100', 'bf4200', 'bf4300', 'bf4430', 'bf4720', 'bf4840', 'bf4910', 'bf4a20'])
           midi.send(h.match(/../g).map(x => parseInt(x, 16)));

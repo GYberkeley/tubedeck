@@ -656,6 +656,8 @@ class BrowserSmoke(unittest.TestCase):
     def test_ddj1000_jog_screen_handshake(self):
         """The DDJ-1000 handshake waits for its sound card, answers the challenge correctly, then brings the screens up."""
         pg = self.page()
+        # No network in tests: the recorded bring-up is unavailable, so the short one is used.
+        pg.evaluate("jogScreens.loadingBurst = Promise.resolve(); jogScreens.burst = null")
         pg.evaluate("""() => { window.sent = []; midi.outputs = [{ send: b => sent.push(Array.from(b)) }]; midi.preset = PRESETS[1];
             window.ddj = body => midi.receive(new Uint8Array([0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, ...body, 0xF7])); }""")
         # Just connected: nothing but the keep-alive until the unit has asked and been answered.
@@ -685,6 +687,17 @@ class BrowserSmoke(unittest.TestCase):
         self.assertTrue(pg.evaluate("sent.some(m => m[0] === 0x9F && m[1] === 0x09 && m[2] === 0x7F)"))  # PC app connect
         pg.evaluate("sent.length = 0; midi.lit.clear(); midi.lights()")
         self.assertGreater(pg.evaluate("sent.length"), 0)                                           # lights back on
+        # With the recorded bring-up available it is replayed whole, timed, and lights wait for it.
+        pg.evaluate("""() => { jogScreens.burst = [[0x90, 0x0B, 0x00], [0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x0B, 0x34, 0xF7]];
+            window.timed = []; midi.outputs = [{ send: (b, at) => timed.push([Array.from(b), at]) }];
+            jogScreens.bringing = false; jogScreens.bringUp(); }""")
+        pg.wait_for_function("timed.filter(x => x[1]).length === 2", timeout=5000)
+        self.assertFalse(pg.evaluate("jogScreens.quiet()"))                 # lights held during the burst
+        pg.wait_for_function("jogScreens.quiet()", timeout=3000)
+        # A recording that doesn't match the pinned fingerprint is refused.
+        pg.evaluate("""async () => { jogScreens.burst = null; jogScreens.loadingBurst = null;
+            const real = window.fetch; window.fetch = async () => new Response('900b00\\n'); await jogScreens.loadBurst(); window.fetch = real; }""")
+        self.assertIsNone(pg.evaluate("jogScreens.burst"))
         pg.evaluate("phones.mode = 'off'")
         self.assertEqual(self.errors, [])
         pg.close()

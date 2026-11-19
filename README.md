@@ -160,7 +160,8 @@ Open the app in **Chrome or Edge on a computer**, at `http://localhost:8765` or 
   - **Beat FX:** on/off (held for brake, back spin and roll), SHIFT + on/off to stop all, beat length, effect select (the DDJ-1000's selector picks the effect directly), channel select and level.
   - **Browser:** browse, load to either deck, switch between results and collection, and waveform zoom (FLX4).
   - **Lights:** play, cue, sync, CUE, loops, pads, FX and the channel level meters follow the app.
-  - The DDJ-1000's jog screens and key sync aren't supported (the screens use a closed format, and key sync needs key detection). Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
+  - **DDJ-1000 jog screens (experimental, stage 1):** tubedeck answers the unit's unlock handshake so the screens leave "NO AUDIO DRIVER". Play through the DDJ-1000's sound card (Headphones → DJ controller sound card), click **Open DDJ-1000 HID** in Settings, then replug the controller. After unlocking it replays rekordbox's recorded start-up burst, fetched from a pinned commit of the pioneered-by-ntamas project and checked against its SHA-256 (it is never bundled here). Drawing the playhead, waveform and artwork is the next stage.
+  - Key sync isn't supported (it needs key detection). Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
 - **Any other MIDI controller:** click **MIDI learn**, click a control on screen, then move or press it on the controller. Learned controls are saved in the browser and win over the built-in mapping.
 - The Settings panel shows a live list of incoming MIDI messages, which helps when something doesn't respond.
 
@@ -282,6 +283,7 @@ The helper reads these environment variables:
   - [awesome-djhardware-unchained](https://github.com/mattpstv/awesome-djhardware-unchained) (CC0): the list that led to the projects below.
   - [DJ-MIDI-Studio](https://github.com/guillain/DJ-MIDI-Studio): the model for MIDI learn and the live message monitor (design only).
   - [DDJ-SP1](https://github.com/dmvjs/DDJ-SP1): relaying MIDI from a helper to a browser, a possible route to controllers on the iPad (not used yet).
+- The DDJ-1000 jog screen unlock in `web/midi.js` is written from the protocol documented by [pioneered-by-ntamas](https://github.com/ntamas94/pioneered-by-ntamas) (from USB captures of rekordbox) and Swiftb0y's CDJHidProtocol research. Its recorded rekordbox start-up burst is downloaded at runtime from that project, not copied into this repo.
 
 ## Screenshots
 
