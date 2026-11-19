@@ -52,10 +52,13 @@ const midi = {
 
   bind() {
     const ins = [...this.access.inputs.values()];
-    this.outputs = [...this.access.outputs.values()];
+    const outs = [...this.access.outputs.values()];
     for (const i of ins) i.onmidimessage = e => this.receive(e.data);
     const names = ins.map(i => i.name);
     this.preset = PRESETS.find(p => names.some(n => p.match.test(n))) || null;
+    // Lights, keep-alives and the DDJ-1000 handshake go only to the matched controller.
+    this.outputs = this.preset ? outs.filter(o => this.preset.match.test(o.name)) : outs;
+    if (this.preset?.model === '1000') jogScreens.expect();
     clearInterval(this.keepTimer); this.keepTimer = null;
     if (this.preset?.keepAlive && this.access.sysexEnabled) this.keepTimer = setInterval(() => this.send(this.preset.keepAlive), 200);
     this.lit.clear();
@@ -279,6 +282,8 @@ const midi = {
   // ---------- lights ----------
   lights() {
     if (!this.preset || !this.outputs.length) return;
+    // rekordbox sends a DDJ-1000 nothing but the keep-alive until it has unlocked it.
+    if (this.preset.model === '1000' && !jogScreens.quiet()) return;
     const want = new Map();
     ['A', 'B'].forEach((L, ch) => {
       const d = decks[L], loaded = !!d.track;
@@ -397,14 +402,15 @@ const jogScreens = {
   // held until tubedeck is playing out of the DDJ's own sound card (it asks once).
   audioReady() {
     if (!ctx || ctx.state !== 'running' || phones.mode !== 'quad') return false;
-    return /DDJ|Pioneer/i.test(phones.labels?.[phones.mainId] || '');
+    // Chrome hides device names until asked, so a 4+ output device counts too.
+    return /DDJ|Pioneer/i.test(phones.labels?.[phones.mainId] || '') || ctx.destination.maxChannelCount >= 4;
   },
   sysex(data) {
     const m = [...data];
     if (midi.preset?.model !== '1000' || !DDJ1000_HDR.every((b, i) => m[i] === b) || m.length < 11) return '';
     const cmd = m[9], sub = m[10];
     if (cmd === 0x11 && sub === 0x02) {
-      if (!this.since) this.since = performance.now();
+      if (this.state !== 'waiting') { this.since = performance.now(); this.bringing = false; }   // a new USB session
       if (!this.audioReady() && performance.now() - this.since < 90000) {
         this.pending = true; this.set('waiting', 'The DDJ-1000 asked to unlock its screens. Set Headphones to "DJ controller sound card" with the DDJ-1000 as the main output; tubedeck answers once it plays through it.');
         return 'jog screens: challenge (waiting for DDJ audio)';
@@ -425,19 +431,34 @@ const jogScreens = {
     }
     return `jog screens: message ${cmd.toString(16)}`;
   },
+  // Just connected: the unit challenges within a few seconds of being plugged in. No
+  // challenge in 8 s means it unlocked earlier this USB session (or never will).
+  expect() {
+    if (this.state === 'unlocked' || this.state === 'waiting' || this.state === 'answering') return;
+    this.set('expecting', 'Waiting for the DDJ-1000 to ask (it does right after it is plugged in)…');
+    clearTimeout(this.expectTimer);
+    this.expectTimer = setTimeout(() => { if (this.state === 'expecting') this.set('idle', 'No unlock request. Replug the DDJ-1000 with tubedeck open to unlock its screens.'); }, 8000);
+  },
+  quiet() { return this.state === 'unlocked' || this.state === 'idle' || this.state === 'failed'; },
   answer() { this.pending = false; midi.send(this.identity()); this.set('answering', 'Answering the DDJ-1000…'); },
   poll() { if (this.pending && (this.audioReady() || performance.now() - this.since > 90000)) this.answer(); },
   // What rekordbox sends once the unit accepts: display state, then screens on per deck.
   bringUp() {
+    if (this.bringing) return;
+    this.bringing = true;
     const sx = hex => midi.send([...DDJ1000_HDR, ...hex.match(/../g).map(h => parseInt(h, 16)), 0xF7]);
     setTimeout(() => {
       ['000b2b68000000', '000c0000020e0e000000', '000a00280026000a394a742853202014152205' + '00'.repeat(21)].forEach(sx);
       setTimeout(() => {
+        // Settings rekordbox applies on the unit: PC app connect, demo mode off, LCD and ring brightness.
+        for (const m of [[0x9F, 0x09, 0x7F], [0xBF, 0x44, 0x00], [0xBF, 0x48, 0x40], [0xBF, 0x46, 0x30]]) midi.send(m);
         ['000a002800260024153255481421' + '00'.repeat(26), '000b3560140100', '000c0000020e0e000000'].forEach(sx);
         for (const h of ['9f407f', '9f4100', '9f427f', 'bf4630', 'bf4100', 'bf4200', 'bf4300', 'bf4430', 'bf4720', 'bf4840', 'bf4910', 'bf4a20'])
           midi.send(h.match(/../g).map(x => parseInt(x, 16)));
+        for (let ch = 0; ch < 4; ch++) for (const note of [0x0B, 0x47, 0x0C, 0x50]) midi.send([0x90 | ch, note, 0x00]);
         ['000b310000000000', '000a002800260028490a64691400' + '00'.repeat(26), '000b310000000000', '000c0000020e0e000000'].forEach(sx);
         for (let ch = 0; ch < 4; ch++) { midi.send([0x90 | ch, 0x5B, 0x01]); midi.send([0x90 | ch, 0x5D, 0x00]); }   // ring light, screen on
+        midi.lit.clear();   // the burst switched some buttons off: resend every light
       }, 1050);
     }, 20);
   },

@@ -658,6 +658,9 @@ class BrowserSmoke(unittest.TestCase):
         pg = self.page()
         pg.evaluate("""() => { window.sent = []; midi.outputs = [{ send: b => sent.push(Array.from(b)) }]; midi.preset = PRESETS[1];
             window.ddj = body => midi.receive(new Uint8Array([0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, ...body, 0xF7])); }""")
+        # Just connected: nothing but the keep-alive until the unit has asked and been answered.
+        pg.evaluate("jogScreens.expect(); sent.length = 0; midi.lights()")
+        self.assertEqual(pg.evaluate("sent.length"), 0)
         # "Who are you?" before the DDJ's audio is playing: held, not answered.
         pg.evaluate("ddj([0x11, 0x02])")
         self.assertEqual(pg.evaluate("jogScreens.state"), "waiting")
@@ -679,6 +682,9 @@ class BrowserSmoke(unittest.TestCase):
         pg.evaluate("ddj([0x15, 0x02])")
         self.assertEqual(pg.evaluate("jogScreens.state"), "unlocked")
         pg.wait_for_function("sent.some(m => m[0] === 0x93 && m[1] === 0x5D && m[2] === 0)", timeout=5000)
+        self.assertTrue(pg.evaluate("sent.some(m => m[0] === 0x9F && m[1] === 0x09 && m[2] === 0x7F)"))  # PC app connect
+        pg.evaluate("sent.length = 0; midi.lit.clear(); midi.lights()")
+        self.assertGreater(pg.evaluate("sent.length"), 0)                                           # lights back on
         pg.evaluate("phones.mode = 'off'")
         self.assertEqual(self.errors, [])
         pg.close()
