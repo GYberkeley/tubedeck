@@ -1721,6 +1721,7 @@ const phones = {
   },
   async fillDevices(ask) {
     const outs = await this.listDevices(ask);
+    this.labels = Object.fromEntries(outs.map(d => [d.deviceId, d.label]));
     for (const [sel, cur] of [[$('#phonesMain'), this.mainId], [$('#phonesDevice'), this.hpId]]) {
       sel.innerHTML = '<option value="">System default</option>' + outs.filter(d => d.deviceId && d.deviceId !== 'default')
         .map(d => `<option value="${escapeHtml(d.deviceId)}">${escapeHtml(d.label || 'Output device')}</option>`).join('');

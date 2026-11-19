@@ -653,6 +653,36 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_ddj1000_jog_screen_handshake(self):
+        """The DDJ-1000 handshake waits for its sound card, answers the challenge correctly, then brings the screens up."""
+        pg = self.page()
+        pg.evaluate("""() => { window.sent = []; midi.outputs = [{ send: b => sent.push(Array.from(b)) }]; midi.preset = PRESETS[1];
+            window.ddj = body => midi.receive(new Uint8Array([0xF0, 0x00, 0x40, 0x05, 0x00, 0x00, 0x02, 0x00, 0x00, ...body, 0xF7])); }""")
+        # "Who are you?" before the DDJ's audio is playing: held, not answered.
+        pg.evaluate("ddj([0x11, 0x02])")
+        self.assertEqual(pg.evaluate("jogScreens.state"), "waiting")
+        self.assertEqual(pg.evaluate("sent.filter(m => m[0] === 0xF0 && m[9] === 0x12).length"), 0)
+        # Once tubedeck plays through the DDJ's sound card, it answers with its identity.
+        pg.evaluate("audio(); phones.mode = 'quad'; phones.mainId = 'ddj'; phones.labels = { ddj: 'DDJ-1000' }; jogScreens.poll()")
+        pg.wait_for_function("ctx.state === 'running'")
+        pg.evaluate("jogScreens.poll()")
+        ident = pg.evaluate("sent.find(m => m[0] === 0xF0 && m[9] === 0x12)")
+        self.assertEqual(ident[9:11], [0x12, 0x2A])
+        self.assertIn(list(b"PioneerDJ"), [ident[i:i + 9] for i in range(len(ident))])
+        # The challenge: seed 12 34 AB CD (as nibbles). The answer's hash is FNV-1a over seed and seed^secret.
+        pg.evaluate("ddj([0x13, 0x0C, 0x03, 0x0A, 0x1, 0x2, 0x3, 0x4, 0xA, 0xB, 0xC, 0xD])")
+        cap = pg.evaluate("sent.find(m => m[0] === 0xF0 && m[9] === 0x14)")
+        self.assertEqual(len(cap), 66)
+        hash_spread = [0xE, 0xC, 0x9, 0x8, 0x6, 0x8, 0x8, 0xE]          # ec98688e, computed by the reference code
+        self.assertIn(hash_spread, [cap[i:i + 8] for i in range(len(cap))])
+        # ACK: unlocked, and the screens are switched on for all four decks.
+        pg.evaluate("ddj([0x15, 0x02])")
+        self.assertEqual(pg.evaluate("jogScreens.state"), "unlocked")
+        pg.wait_for_function("sent.some(m => m[0] === 0x93 && m[1] === 0x5D && m[2] === 0)", timeout=5000)
+        pg.evaluate("phones.mode = 'off'")
+        self.assertEqual(self.errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
