@@ -25,8 +25,9 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 
 - **Two decks:** waveform overview and scrolling waveforms, Pioneer-style CUE, play/pause, a jog wheel you can scratch, tempo ±8% with key lock, automatic BPM detection (with ½ and ×2 fixes), TAP, SYNC and MASTER.
 - **Cues and loops:** 8 hot cues, beat loops from 1/32 to 512 beats (pads cover 1/4 to 32), manual loop in/out, beat jump, slip mode and ROLL.
-- **Mixer:** trim, 3-band EQ, Color FX (filter, dub echo, noise, crush, jet), channel faders with meters and an equal-power crossfader.
-- **Beat FX:** echo, delay, ping pong, spiral, reverb, flanger, phaser, trans, filter and crush, plus vinyl brake and back spin (hold to use; the track carries on as if it never stopped).
+- **Pads:** hot cue, beat loop, beat jump, roll, a sampler with 16 built-in sounds, and key shift.
+- **Mixer:** trim, 3-band EQ, Color FX (filter, space, dub echo, sweep, noise, crush, jet, pitch), channel faders with meters and an equal-power crossfader.
+- **Beat FX:** echo, delay, ping pong, spiral, reverb, trans, filter, flanger, phaser, pitch, helix, mobius and bit crush, plus roll, vinyl brake and back spin (hold to use; the track carries on as if it never stopped). This covers rekordbox's Beat FX for the DDJ-FLX4.
 - **Stems:** split a downloaded track into vocals, instruments, bass and drums, then mute or isolate them (optional, needs [Demucs](#stems-optional)).
 - **Headphone cueing:** CUE buttons and four routing modes, including split cue for a single pair of headphones and a DJ controller's 4-output sound card.
 - **DJ controllers:** built-in mappings for the Pioneer DDJ-FLX4 and DDJ-1000, with lights, plus MIDI learn for any other controller.
@@ -151,7 +152,15 @@ Drag audio files onto a deck (the deck lights up), or anywhere on the page (the 
 
 Open the app in **Chrome or Edge on a computer**, at `http://localhost:8765` or an HTTPS address (Web MIDI needs a secure page; the plain LAN address doesn't count, and iPad browsers don't support MIDI at all). Plug in the controller, then Settings → DJ controller → **Connect controller**. It reconnects automatically after that.
 
-- **Pioneer DDJ-FLX4 and DDJ-1000** are mapped out of the box: decks, jog wheels, tempo, mixer, Color FX knobs, loops, pad modes (hot cue, beat loop, beat jump, roll, and stems on the FLX4), beat FX, browse and load, headphone CUE and mix. The buttons and pads light up to match the app. Other Pioneer DDJs use the same scheme and partly work.
+- **Pioneer DDJ-FLX4 and DDJ-1000** are mapped out of the box, covering every control in the reference mappings (all 696 messages the DDJ-1000 sends and all 281 from the FLX4):
+  - **Decks:** play, cue, sync, master, key lock, quantize, slip, jog scratch and pitch bend, tempo (with SHIFT + SYNC cycling ±6/8/16/50%), jump to start, censor (SHIFT + PLAY) and the DDJ-1000's reverse switch, needle search, ±32-beat jumps, and SHIFT + jog to adjust the beat grid (DDJ-1000).
+  - **Loops:** in/out, reloop/exit, reloop and stop, halve/double, the DDJ-1000's 4-beat loop, and loop in/out adjust with the jog.
+  - **Pads:** hot cue (SHIFT clears), beat loop, beat jump (with size up/down), roll, sampler (16 built-in sounds in two banks; SHIFT stops), key shift (SHIFT steps by a semitone), and stems on the FLX4's keyboard mode.
+  - **Mixer:** trim, EQ, filter/Color FX, channel faders, crossfader, the DDJ-1000's crossfader assign switches, master, headphone CUE, mix and level, and sampler volume.
+  - **Beat FX:** on/off (held for brake, back spin and roll), SHIFT + on/off to stop all, beat length, effect select (the DDJ-1000's selector picks the effect directly), channel select and level.
+  - **Browser:** browse, load to either deck, switch between results and collection, and waveform zoom (FLX4).
+  - **Lights:** play, cue, sync, CUE, loops, pads, FX and the channel level meters follow the app.
+  - The DDJ-1000's jog screens and key sync aren't supported (the screens use a closed format, and key sync needs key detection). Channels 3 and 4 control decks 1 and 2. Other Pioneer DDJs use the same scheme and partly work.
 - **Any other MIDI controller:** click **MIDI learn**, click a control on screen, then move or press it on the controller. Learned controls are saved in the browser and win over the built-in mapping.
 - The Settings panel shows a live list of incoming MIDI messages, which helps when something doesn't respond.
 

@@ -117,6 +117,7 @@ class BrowserSmoke(unittest.TestCase):
         pg.on("pageerror", lambda e: self.errors.append(str(e)))
         pg.on("console", lambda m: m.type == "error" and self.errors.append(f"{m.text} {m.location.get('url', '')}"))
         pg.goto(self.base + (f"/?t={server.TOKEN}" if token else "/"))
+        pg.wait_for_function("document.documentElement.dataset.theme")  # app.js has finished starting
         return pg
 
     def test_full_flow(self):
@@ -331,7 +332,8 @@ class BrowserSmoke(unittest.TestCase):
         def changed(spec):
             return sum(abs(x - y) for x, y in zip(spec, dry)) / len(dry)
 
-        for fx_type in ["echo", "delay", "pingpong", "spiral", "reverb", "trans", "filter", "flanger", "phaser", "crush"]:
+        for fx_type in ["echo", "delay", "pingpong", "spiral", "reverb", "trans", "filter", "flanger", "phaser", "crush",
+                        "pitch", "helix", "mobius"]:
             pg.select_option(".fxunit[data-fx='0'] select", fx_type)
             pg.click(".fxunit[data-fx='0'] .fx-on")
             on_level = pg.evaluate(level)
@@ -370,6 +372,18 @@ class BrowserSmoke(unittest.TestCase):
         pg.wait_for_timeout(150)
         self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t0 + 0.5)
 
+        # ROLL as a Beat FX: held like the brake, it rolls the beat length and lands back in time.
+        pg.select_option(".fxunit[data-fx='0'] select", "roll")
+        pg.evaluate("decks.A.el.currentTime = 20")
+        start = pg.evaluate("decks.A.el.currentTime")
+        on.dispatch_event("pointerdown")
+        self.assertTrue(pg.evaluate("decks.A.loop && decks.A.loop.roll"))
+        pg.wait_for_timeout(1000)
+        on.dispatch_event("pointerup")
+        pg.wait_for_timeout(50)
+        self.assertIsNone(pg.evaluate("decks.A.loop"))
+        self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), start + 1.05, delta=0.25)
+
         # ROLL: hold a pad to repeat a slice, release to land where the track would be.
         pg.evaluate("decks.A.el.currentTime = 10")
         pg.select_option(".deck[data-deck=A] .pad-mode", "roll")
@@ -385,7 +399,7 @@ class BrowserSmoke(unittest.TestCase):
         self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), start + 1.05, delta=0.2)
 
         # Each Color FX type changes the sound when the CFX knob is turned.
-        for cfx in ["filter", "dub", "noise", "crush", "jet"]:
+        for cfx in ["filter", "space", "dub", "sweep", "noise", "crush", "jet", "pitch"]:
             pg.select_option("#cfxType", cfx)
             pg.evaluate("mixer.channels.A.knobs.cfx.set(0.8)")
             self.assertGreater(changed(pg.evaluate(spectrum)), 1.0, f"cfx {cfx}: no audible change")
@@ -574,6 +588,71 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(errors, [])
         pg.close()
 
+    def test_ddj_full_mapping(self):
+        """Shift-layer and DDJ-1000 controls act on the app: sampler, key shift, censor, jumps, ranges, FX select, VU."""
+        pg = self.browser.new_page(viewport={"width": 1180, "height": 820})
+        errors = []
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.goto(self.base + f"/?sp=1&t={server.TOKEN}")
+        pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.bpm > 0", timeout=30000)
+        pg.evaluate("""() => { window.sent = []; midi.outputs = [{ send: b => sent.push(Array.from(b).join(',')) }];
+            window.rx = (...b) => midi.receive(new Uint8Array(b)); window.use = i => { midi.preset = PRESETS[i]; midi.lit.clear(); }; }""")
+        pg.evaluate("use(0)")                                                 # DDJ-FLX4
+        pg.dispatch_event(".deck[data-deck=A] .play", "pointerdown")
+        pg.wait_for_function("decks.A.el.currentTime > 0.3")
+        # Sampler pad plays a synthesized one-shot; SHIFT + pad stops it.
+        pg.evaluate("rx(0x97, 0x30, 0x7F)")
+        pg.wait_for_function("sampler.playing['0:0']", timeout=10000)
+        self.assertEqual(pg.evaluate("decks.A.mode"), "sampler")
+        pg.evaluate("rx(0x98, 0x30, 0x7F)")
+        self.assertFalse(pg.evaluate("!!sampler.playing['0:0']"))
+        # Key shift pads: pad 2 = +1, SHIFT + pad 1 = +1 more, pad 8 = reset.
+        pg.evaluate("rx(0x97, 0x71, 0x7F); rx(0x98, 0x70, 0x7F)")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 2)
+        pg.evaluate("rx(0x97, 0x77, 0x7F)")
+        self.assertEqual(pg.evaluate("decks.A.keyShift"), 0)
+        # SHIFT + BEAT SYNC cycles the tempo range; the fader follows.
+        pg.evaluate("rx(0x90, 0x60, 0x7F)")
+        self.assertEqual(pg.evaluate("[decks.A.tempoRange, +decks.A.ui.tempo.max]"), [16, 16])
+        # SHIFT + CUE/LOOP CALL jumps 32 beats (16 s at 120 BPM).
+        pg.evaluate("decks.A.el.currentTime = 20")
+        pg.wait_for_timeout(100)
+        t0 = pg.evaluate("decks.A.el.currentTime")
+        pg.evaluate("rx(0x90, 0x3E, 0x7F)")
+        self.assertAlmostEqual(pg.evaluate("decks.A.el.currentTime"), t0 - 16, delta=0.2)
+        # Censor (SHIFT + PLAY): reverses while held, then lands back in time.
+        t0 = pg.evaluate("decks.A.el.currentTime")
+        pg.evaluate("rx(0x90, 0x0E, 0x7F)")
+        pg.wait_for_timeout(800)
+        self.assertLess(pg.evaluate("decks.A.el.currentTime"), t0)
+        pg.evaluate("rx(0x90, 0x0E, 0)")
+        pg.wait_for_timeout(150)
+        self.assertGreater(pg.evaluate("decks.A.el.currentTime"), t0 + 0.6)
+        # SHIFT + BEAT FX ON/OFF turns every effect off.
+        pg.evaluate("fx[0].toggle(); fx[1].toggle(); rx(0x94, 0x43, 0x7F)")
+        self.assertEqual(pg.evaluate("[fx[0].on, fx[1].on]"), [False, False])
+        # VU meter goes back to the controller.
+        pg.evaluate("midi.lights()")
+        self.assertTrue(any(m.startswith("176,2,") for m in pg.evaluate("sent")))
+        # DDJ-1000: Beat FX selector, crossfader THRU, sampler bank, loop-in adjust with the jog.
+        pg.evaluate("use(1)")
+        pg.evaluate("rx(0x94, 0x2D, 0x7F)")
+        self.assertEqual(pg.evaluate("fx[0].type"), "helix")
+        pg.evaluate("rx(0x90, 0x1D, 0x7F)")
+        self.assertEqual(pg.evaluate("mixer.xfAssign.A"), "T")
+        pg.evaluate("rx(0x90, 0x16, 0x7F)")
+        pg.evaluate("rx(0x90, 0x09, 0x7F)")
+        self.assertEqual(pg.evaluate("sampler.bank"), 1)
+        pg.evaluate("decks.A.beatLoop(4); rx(0x90, 0x4C, 0x7F)")
+        start = pg.evaluate("decks.A.loop.start")
+        pg.evaluate("for (let i = 0; i < 20; i++) rx(0xB0, 0x21, 64 + 10)")   # 200 ticks forward
+        self.assertGreater(pg.evaluate("decks.A.loop.start"), start + 0.01)
+        pg.evaluate("rx(0x90, 0x4C, 0x7F); decks.A.exitLoop()")
+        self.assertEqual(errors, [])
+        pg.close()
+
     def test_slow_older_search_does_not_overwrite_newer(self):
         pg = self.page()
         pg.wait_for_function("document.querySelector('#helperStatus').textContent === 'Helper connected'")
@@ -624,6 +703,7 @@ class BrowserSmoke(unittest.TestCase):
                 self.assertTrue(pg.evaluate(f"!under.gl || !!under.program('{theme}')"), f"{theme}: background shader failed to compile")
         pg.select_option("#themeSel", "meadow")
         pg.reload()
+        pg.wait_for_function("document.documentElement.dataset.theme")  # set once app.js has run
         self.assertEqual(pg.evaluate("document.documentElement.dataset.theme"), "meadow")
         pg.evaluate("localStorage.removeItem('tubedeck.theme')")
 

@@ -72,9 +72,12 @@ class DeckDSP {
         // spin that winds down. Both hold silent at the end until released. Like
         // rekordbox's Beat FX, the deck keeps running underneath: on release, playback
         // continues where the track would be had it never stopped.
-        if (m.kind) this.motion = { kind: m.kind, v0: m.kind === 'spin' ? -3.5 : (this.playing ? this.rate : 0), dur: m.seconds * this.sr, t: 0, start: this.pos };
+        // Reverse plays backwards at the deck's speed until released; with slip (censor) it
+        // lands back in time, without (the REV switch) it carries on from where it got to.
+        if (m.kind) this.motion = { kind: m.kind, v0: m.kind === 'spin' ? -3.5 : m.kind === 'reverse' ? -(this.playing ? this.rate : 0) : (this.playing ? this.rate : 0),
+          dur: m.kind === 'reverse' ? Infinity : m.seconds * this.sr, t: 0, start: this.pos, slip: m.slip !== false };
         else {
-          if (this.motion && this.playing) this.pos = Math.max(0, Math.min(this.length - 1, this.motion.start + this.motion.t * this.rate));
+          if (this.motion && this.playing && this.motion.slip) this.pos = Math.max(0, Math.min(this.length - 1, this.motion.start + this.motion.t * this.rate));
           this.motion = null; this.resetStretch();
         }
         break;
@@ -138,7 +141,7 @@ class DeckDSP {
     if (this.motion && !this.scratching) {
       const mo = this.motion;
       for (let j = 0; j < n; j++) {
-        const left = Math.max(0, 1 - mo.t / mo.dur), v = mo.v0 * (mo.kind === 'spin' ? left * left : left);
+        const left = mo.kind === 'reverse' ? 1 : Math.max(0, 1 - mo.t / mo.dur), v = mo.v0 * (mo.kind === 'spin' ? left * left : left);
         mo.t++; this.motionV = v;
         this.pos = Math.max(0, Math.min(this.length - 1, this.pos + v));
         if (v === 0) { L[j] = 0; R[j] = 0; continue; }
