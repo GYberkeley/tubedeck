@@ -32,6 +32,7 @@ A practice DJ console for the browser, laid out like a Pioneer DDJ-FLX4 in rekor
 - **Stems:** split a downloaded track into vocals, instruments, bass and drums, then mute or isolate them (optional, needs [Demucs](#stems-optional)).
 - **Headphone cueing:** CUE buttons and four routing modes, including split cue for a single pair of headphones and a DJ controller's 4-output sound card.
 - **DJ controllers:** built-in mappings for the Pioneer DDJ-FLX4 and DDJ-1000, with lights, plus MIDI learn for any other controller.
+- **Collection:** every downloaded track shows its BPM and key (worked out in the background and stored by the helper, so every device sees them). Sort by recently added, title, BPM, key or length; **MATCH** shows only tracks whose key and tempo mix with the playing deck.
 - **Your own files:** drag MP3, WAV, M4A/AAC, FLAC, OGG/Opus or AIFF files onto a deck, or use Open file.
 - **Themes:** 16 of them, from plain colour schemes to live 3D scenes that move with the music.
 - **iPad:** works in Safari on the same Wi-Fi, or from anywhere over HTTPS with Tailscale, and installs to the home screen.
@@ -78,6 +79,7 @@ The helper keeps its data in `~/.tubedeck`:
 - `token`: the pairing code
 - `cache/`: downloaded audio and track info (each track is downloaded only once)
 - `cache/stems/`: separated stems
+- `cache/<id>.analysis.json`: BPM, beat phase and key for each track, sent by the page after analysing it
 - `throttle.json`: throttle state, so the limits survive restarts
 
 ## Using it
@@ -212,6 +214,7 @@ Searches don't queue behind downloads: if the helper is busy, the search returns
 - `tests/test_dsp.js`: audio engine tests (Node).
 - `tests/browser_smoke.py`: end-to-end tests of the web app in headless Chrome.
 - `docs/screenshots/`: one screenshot per theme.
+- `.github/workflows/tests.yml`: runs the tests on GitHub.
 
 ## Developing
 
@@ -248,6 +251,7 @@ python3 -W ignore tests/browser_smoke.py  # the web app in headless Chrome
 ruff check .                              # Python lint
 ```
 
+- GitHub Actions runs all four on every pull request and on pushes to `main` (`.github/workflows/tests.yml`).
 - The helper tests need only Python. The engine tests need Node 18 or later.
 - The browser tests need Playwright for Python (`python3 -m pip install playwright`), Google Chrome, and ffmpeg (which builds the test audio). They start their own helper on a spare port with a fake yt-dlp, so they never touch YouTube or your real cache.
 - The browser tests cover loading and playing, effects, stems, every theme's shaders, the layout at phone and iPad widths, headphone routing (they measure each ear), a simulated DDJ controller, and dropping a local file.

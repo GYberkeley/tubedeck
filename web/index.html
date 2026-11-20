@@ -106,6 +106,13 @@
       <button class="tab active" data-tab="results">Results</button>
       <button class="tab" data-tab="library">Collection</button>
     </div>
+    <div id="libTools" class="lib-tools" hidden>
+      <select id="libSort" aria-label="Sort the collection">
+        <option value="added">Recently added</option><option value="title">Title</option>
+        <option value="bpm">BPM</option><option value="key">Key</option><option value="length">Length</option>
+      </select>
+      <button id="libMatch" class="tog" title="Show only tracks whose key and tempo mix with the playing deck">MATCH</button>
+    </div>
     <div id="queueInfo" class="queue-info"></div>
   </div>
   <ul id="list" class="list"><li class="empty">Search for a track to get started.</li></ul>

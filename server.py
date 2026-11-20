@@ -80,6 +80,27 @@ def read_meta(video_id):
     return json.loads(p.read_text()) if p.exists() else {"id": video_id}
 
 
+def read_analysis(video_id):
+    """BPM, beat phase and key the page worked out for a track, or None."""
+    p = CACHE / f"{video_id}.analysis.json"
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def clean_analysis(data):
+    """The analysis fields, checked; None if anything is missing or out of range."""
+    try:
+        bpm, first, key = float(data["bpm"]), float(data["firstBeat"]), data["key"]
+        tonic, mode = int(key["tonic"]), key["mode"]
+    except (KeyError, TypeError, ValueError):
+        return None
+    if not (20 <= bpm <= 400 and 0 <= first < 10 and 0 <= tonic < 12 and mode in ("maj", "min")):
+        return None
+    return {"bpm": round(bpm, 2), "firstBeat": round(first, 4), "key": {"tonic": tonic, "mode": mode}}
+
+
 class Throttle:
     """Shared gate for every request this helper sends to YouTube."""
 
@@ -476,7 +497,8 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/library":
             audio = [p for p in CACHE.iterdir() if p.suffix in AUDIO_TYPES and VIDEO_ID.match(p.stem)]
             audio.sort(key=lambda p: p.stat().st_mtime, reverse=True)
-            return self._json({"tracks": [{**read_meta(p.stem), "stems": has_stems(p.stem)} for p in audio]})
+            return self._json({"tracks": [{**read_meta(p.stem), "stems": has_stems(p.stem), "analysis": read_analysis(p.stem),
+                                           "added": int(p.stat().st_mtime)} for p in audio]})
         if path == "/api/stems":
             vid = qs.get("id", [""])[0]
             if not VIDEO_ID.match(vid):
@@ -503,6 +525,24 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"error": "bad id"}, 400)
             downloader.request(vid, front=qs.get("now", ["0"])[0] == "1")
             return self._json(downloader.status(vid))
+        if url.path == "/api/analysis":
+            # The page analyses tracks (BPM, key) and stores the result here, so every
+            # device sees it in the collection without decoding the track again.
+            vid = qs.get("id", [""])[0]
+            if not VIDEO_ID.match(vid) or not (CACHE / f"{vid}.json").exists():
+                return self._json({"error": "unknown track"}, 404)
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(length)) if 0 < length <= 2048 else None
+            except ValueError:
+                data = None
+            clean = clean_analysis(data) if isinstance(data, dict) else None
+            if not clean:
+                return self._json({"error": "bad analysis"}, 400)
+            tmp = CACHE / f"{vid}.analysis.tmp"
+            tmp.write_text(json.dumps(clean))
+            os.replace(tmp, CACHE / f"{vid}.analysis.json")
+            return self._json({"ok": True})
         if url.path == "/api/stems":
             vid = qs.get("id", [""])[0]
             if not VIDEO_ID.match(vid):

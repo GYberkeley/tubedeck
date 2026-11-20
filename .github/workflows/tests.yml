@@ -1,0 +1,36 @@
+name: tests
+
+# Runs every suite on each pull request and on pushes to main.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install test tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          python -m pip install --upgrade pip playwright ruff
+          python -m playwright install-deps chromium
+      - name: Lint
+        run: ruff check .
+      - name: Engine and key detection tests
+        run: node --test tests/test_dsp.js tests/test_analysis.js
+      - name: Helper tests
+        run: python -m unittest discover -s tests -p "test_*.py"
+      - name: Browser tests (the web app in headless Chrome)
+        run: python -W ignore tests/browser_smoke.py
