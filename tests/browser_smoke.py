@@ -117,7 +117,9 @@ class BrowserSmoke(unittest.TestCase):
         pg = self.browser.new_page(viewport={"width": width, "height": height}, has_touch=True)
         self.errors = []
         pg.on("pageerror", lambda e: self.errors.append(str(e)))
-        pg.on("console", lambda m: m.type == "error" and self.errors.append(f"{m.text} {m.location.get('url', '')}"))
+        # Thumbnails come from YouTube's image server, which test tracks aren't on (and CI may not reach).
+        pg.on("console", lambda m: m.type == "error" and "ytimg.com" not in m.location.get("url", "")
+              and self.errors.append(f"{m.text} {m.location.get('url', '')}"))
         pg.goto(self.base + (f"/?t={server.TOKEN}" if token else "/"))
         pg.wait_for_function("document.documentElement.dataset.theme")  # app.js has finished starting
         return pg
