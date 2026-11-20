@@ -19,6 +19,7 @@ class DeckDSP {
     this.length = 0;          // frames
     this.pos = 0;             // frames: what is being heard now
     this.playing = false; this.rate = 1; this.keylock = true; this.ended = false;
+    this.pitch = 1;           // key shift as a frequency ratio (1 = original key)
     this.loop = null;         // {start, end} in frames
     this.scratching = false; this.target = 0; this.vel = 0;
     this.motion = null;       // vinyl brake / backspin: {kind, v0, dur, t}
@@ -50,6 +51,7 @@ class DeckDSP {
         if ('playing' in m) { if (m.playing && !this.playing) { this.ended = false; this.resetStretch(); } this.playing = m.playing; }
         if ('rate' in m) this.rate = m.rate;
         if ('keylock' in m) this.keylock = m.keylock;
+        if ('pitch' in m) this.pitch = m.pitch;
         if ('loop' in m) {
           const prev = this.loop;
           this.loop = m.loop ? { start: m.loop.start * this.sr, end: m.loop.end * this.sr } : null;
@@ -160,7 +162,7 @@ class DeckDSP {
       }
       return;
     }
-    if (this.keylock && Math.abs(this.rate - 1) > 1e-4) return this.stretch(L, R, n, tmp);
+    if (Math.abs(this.pitch - 1) > 1e-4 || (this.keylock && Math.abs(this.rate - 1) > 1e-4)) return this.stretch(L, R, n, tmp);
     this.ws = null;
     for (let j = 0; j < n; j++) {
       const before = this.pos;
@@ -181,29 +183,36 @@ class DeckDSP {
 
   stretch(L, R, n, tmp) {
     const { W, Hs } = this;
-    if (!this.ws) this.ws = { ap: this.pos, prev: Math.round(this.pos) - Hs };
+    // Each grain is read at speed sp: 1 for plain key lock; the key shift ratio when the key
+    // is shifted (times the tempo too with key lock off, where tempo also moves the pitch).
+    // Grains still advance through the track at the tempo, so key and tempo stay separate.
+    const sp = this.pitch * (this.keylock ? 1 : this.rate);
+    // A grain read at speed sp is centred on the analysis position, so shifting the key
+    // doesn't move the audio earlier or later in time.
+    const lead = (W / 2) * (1 - sp);
+    if (!this.ws) this.ws = { ap: this.pos, prev: Math.round(this.pos + lead) - Hs * sp };
     const ws = this.ws;
     while (this.fifoN < n) {
       // Pick the frame near the ideal analysis position that best continues the last one.
-      const natural = ws.prev + Hs, centre = Math.round(ws.ap);
+      const natural = ws.prev + Hs * sp, centre = Math.round(ws.ap + lead);
       let best = centre, bestScore = -Infinity;
       if (natural >= 0) {
         const ref = this._ref || (this._ref = new Float32Array(128));
-        for (let k = 0; k < 128; k++) ref[k] = this.mono(natural + k * 2);
+        for (let k = 0; k < 128; k++) ref[k] = this.mono(natural + k * 2 * sp);
         for (let d = -this.search; d <= this.search; d += 4) {
           let s = 0;
-          for (let k = 0; k < 128; k++) s += ref[k] * this.mono(centre + d + k * 2);
+          for (let k = 0; k < 128; k++) s += ref[k] * this.mono(centre + d + k * 2 * sp);
           if (s > bestScore) { bestScore = s; best = centre + d; }
         }
         // Refine around the coarse peak.
         for (let d = best - 3; d <= best + 3; d++) {
           let s = 0;
-          for (let k = 0; k < 128; k++) s += ref[k] * this.mono(d + k * 2);
+          for (let k = 0; k < 128; k++) s += ref[k] * this.mono(d + k * 2 * sp);
           if (s > bestScore) { bestScore = s; best = d; }
         }
       }
       for (let j = 0; j < W; j++) {
-        this.frame(this.wrap(best + j), tmp);
+        this.frame(this.wrap(best + j * sp), tmp);
         this.olaL[j] += this.win[j] * tmp[0]; this.olaR[j] += this.win[j] * tmp[1];
       }
       // The first Hs samples are now complete (Hann at 50% overlap sums to 1).
@@ -217,13 +226,17 @@ class DeckDSP {
       if (this.loop && ws.ap >= this.loop.end && ws.ap < this.loop.end + this.sr) {
         const len = this.loop.end - this.loop.start; ws.ap -= len; ws.prev -= len;
       }
-      if (ws.ap >= this.length - W) { this.end(L, R, 0, n); this.resetStretch(); return; }
+      if (ws.ap >= this.length - W * Math.max(1, sp)) { this.end(L, R, 0, n); this.resetStretch(); return; }
     }
     L.set(this.fifoL.subarray(0, n)); R.set(this.fifoR.subarray(0, n));
     this.fifoL.copyWithin(0, n, this.fifoN); this.fifoR.copyWithin(0, n, this.fifoN);
     this.fifoN -= n;
     // What is heard now lags the analysis position by the queued output.
-    this.pos = Math.max(0, ws.ap - (this.fifoN + Hs) * this.rate);
+    // The newest queued sample is the end of the grain's first half (ap - Hs*rate + Hs);
+    // the one playing now is fifoN samples (fifoN*rate of track) before it.
+    this.pos = Math.max(0, ws.ap + Hs - (this.fifoN + Hs) * this.rate);
+    // Just after a loop wraps, the queued audio is still the loop's end: report it there.
+    if (this.loop && this.pos < this.loop.start && ws.ap >= this.loop.start) this.pos += this.loop.end - this.loop.start;
   }
 }
 

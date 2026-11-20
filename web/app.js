@@ -516,6 +516,7 @@ class Player {
   motion(kind, seconds, slip) { this.post({ type: 'motion', kind, seconds, slip }); }
   setLoop(loop) { this.loop = loop ? { start: loop.start, end: loop.end } : null; this.post({ type: 'set', loop: this.loop }); }
   setGains(gains) { this.post({ type: 'set', gains }); }
+  setPitch(ratio) { this.post({ type: 'set', pitch: ratio }); }
   scratch(on, target, playing) {
     this.scratching = on;
     const m = { type: 'scratch', on, target };
@@ -602,19 +603,14 @@ class Deck {
     const hpf = Object.assign(c.createBiquadFilter(), { type: 'highpass' }); hpf.frequency.value = 10; hpf.Q.value = 1;
     const ch = c.createGain(), xf = c.createGain(), dry = c.createGain(), meter = c.createAnalyser();
     meter.fftSize = 1024;
-    // Key shift (pads or KEY +/-): the deck goes through a pitch shifter only while shifted.
-    const keyDry = c.createGain(), keyWet = c.createGain(), key = makePitchShifter(c);
-    keyWet.gain.value = 0;
-    src.connect(keyDry).connect(trim); src.connect(key.input); key.output.connect(keyWet).connect(trim);
-    trim.connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
+    src.connect(trim).connect(low).connect(mid).connect(high).connect(lpf).connect(hpf);
     const pre = c.createGain(), cue = c.createGain();      // pre-fader: what CUE sends to the headphones
     const cfx = buildColorFx(c, hpf, pre);
     pre.connect(ch); pre.connect(cue).connect(cueBus);
     cue.gain.value = this.cueOn ? 1 : 0;
     ch.connect(xf).connect(dry).connect(mixBus);
     ch.connect(meter);
-    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, cue, meter, keyDry, keyWet, key, buf: new Float32Array(1024) };
-    this.setKey(this.keyShift || 0);
+    this.chain = { trim, low, mid, high, lpf, hpf, cfx, ch, xf, dry, cue, meter, buf: new Float32Array(1024) };
     mixer.apply();
     fx.forEach(u => u.route());
   }
@@ -656,6 +652,7 @@ class Deck {
       this.keyLock = !this.keyLock;
       this.el.preservesPitch = this.el.webkitPreservesPitch = this.keyLock;
       this.ui.mt.classList.toggle('on', this.keyLock);
+      this.renderKey();
     });
     this.ui.quant.addEventListener('click', () => { this.quantize = !this.quantize; this.ui.quant.classList.toggle('on', this.quantize); });
     this.ui.slip.addEventListener('click', () => { this.slip = !this.slip; this.ui.slip.classList.toggle('on', this.slip); });
@@ -839,6 +836,7 @@ class Deck {
     this.ui.tempo.value = this.tempo;
     this.el.playbackRate = this.rate * (1 + this.bend);
     this.renderBpm();
+    if (!this.keyLock) this.renderKey();
   }
 
   notifyFollowers() {
@@ -997,24 +995,23 @@ class Deck {
   // ---- controller features (DDJ shift layer and buttons) ----
   setKey(semis) {
     this.keyShift = clamp(Math.round(semis), -12, 12);
-    const c = this.chain;
-    if (c) {
-      const t = ctx.currentTime, on = this.keyShift !== 0;
-      c.key.setRatio(2 ** (this.keyShift / 12), t);
-      c.keyDry.gain.setTargetAtTime(on ? 0 : 1, t, 0.01); c.keyWet.gain.setTargetAtTime(on ? 1 : 0, t, 0.01);
-    }
+    // The deck engine shifts the key inside its time stretcher: no added delay, tempo unchanged.
+    this.el.setPitch(2 ** (this.keyShift / 12));
     if (this.mode === 'key') this.renderPads();
     this.renderKey();
   }
   // The key as heard: detected key moved by the key shift.
-  get liveKey() { return this.key && { tonic: (this.key.tonic + this.keyShift + 120) % 12, mode: this.key.mode }; }
+  // With key lock off the tempo fader moves the pitch as well (+6% is about a semitone).
+  get tempoSemis() { return this.keyLock ? 0 : Math.round(12 * Math.log2(this.rate)); }
+  get liveKey() { return this.key && { tonic: (this.key.tonic + this.keyShift + this.tempoSemis + 120) % 12, mode: this.key.mode }; }
   renderKey(fromPeer) {
     if (!this.ui) return;
     const k = this.liveKey, other = Object.values(decks).find(d => d !== this)?.liveKey;
     this.ui.keyVal.textContent = k ? camelot(k) : '--';
-    this.ui.keyName.textContent = k ? `${keyName(k)}${this.keyShift ? ` (${this.keyShift > 0 ? '+' : ''}${this.keyShift})` : ''}` : '';
+    const moved = this.keyShift + this.tempoSemis;
+    this.ui.keyName.textContent = k ? `${keyName(k)}${moved ? ` (${moved > 0 ? '+' : ''}${moved})` : ''}` : '';
     this.ui.keyVal.title = k ? keyName(k) : '';
-    this.ui.keyVal.classList.toggle('shifted', !!this.keyShift);
+    this.ui.keyVal.classList.toggle('shifted', !!moved);
     this.ui.keyVal.classList.toggle('match', !!(k && other && keysMix(k, other)));
     if (this.mode === 'key') this.renderPads();
     if (!fromPeer) for (const d of Object.values(decks)) if (d !== this) d.renderKey(true);   // its match colour depends on this deck
@@ -1027,7 +1024,7 @@ class Deck {
     if (!this.key || !t) return this.setState('Key sync needs both tracks analysed.');
     let best = null;
     for (let s = -6; s <= 6; s++) {
-      const k = { tonic: (this.key.tonic + s + 12) % 12, mode: this.key.mode };
+      const k = { tonic: (this.key.tonic + s + this.tempoSemis + 120) % 12, mode: this.key.mode };
       if (!keysMix(k, t)) continue;
       const cost = Math.abs(s) + (parseInt(camelot(k)) === parseInt(camelot(t)) ? 0 : 0.5);
       if (!best || cost < best.cost) best = { s, cost };

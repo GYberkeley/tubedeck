@@ -167,6 +167,46 @@ test('reverse: censor slips back into time, the REV switch carries on from where
   assert.ok(Math.abs(dsp.pos / SR - 5) < 0.01, `REV carried on from ${dsp.pos / SR}`);
 });
 
+// Frequency from a windowed FFT peak with parabolic interpolation (accurate to ~0.1 Hz).
+function peakHz(x) {
+  const N = 1 << Math.floor(Math.log2(x.length)), re = new Float64Array(N), im = new Float64Array(N);
+  for (let i = 0; i < N; i++) re[i] = x[i] * (0.5 - 0.5 * Math.cos(2 * Math.PI * i / N));
+  for (let i = 1, j = 0; i < N; i++) { let b = N >> 1; for (; j & b; b >>= 1) j ^= b; j ^= b; if (i < j) { [re[i], re[j]] = [re[j], re[i]]; } }
+  for (let len = 2; len <= N; len <<= 1) for (let i = 0; i < N; i += len) for (let k = 0; k < len / 2; k++) {
+    const a = -2 * Math.PI * k / len, c = Math.cos(a), s = Math.sin(a), p = i + k, q = p + len / 2;
+    const tr = re[q] * c - im[q] * s, ti = re[q] * s + im[q] * c; re[q] = re[p] - tr; im[q] = im[p] - ti; re[p] += tr; im[p] += ti;
+  }
+  const mag = k => Math.hypot(re[k], im[k]); let best = 1;
+  for (let k = 2; k < N / 2; k++) if (mag(k) > mag(best)) best = k;
+  const a = mag(best - 1), b = mag(best), c = mag(best + 1);
+  return (best + (c - a) / (2 * (2 * b - a - c))) * SR / N;
+}
+
+test('key shift moves the pitch by exact semitones and leaves the tempo alone', () => {
+  for (const semis of [-12, -7, -5, -2, -1, 1, 2, 5, 7, 12]) {
+    for (const [rate, keylock] of [[1, true], [1.06, true], [1.06, false]]) {
+      const dsp = deck([{ name: 'mix', data: tone(220, 6) }], 6);
+      dsp.handle({ type: 'set', playing: true, rate, keylock, pitch: 2 ** (semis / 12) });
+      const out = render(dsp, 2);
+      const want = 220 * 2 ** (semis / 12) * (keylock ? 1 : rate), got = peakHz(out.subarray(SR / 2));
+      const cents = 1200 * Math.log2(got / want);
+      assert.ok(Math.abs(cents) < 10, `${semis} st, rate ${rate}, keylock ${keylock}: ${got.toFixed(1)} Hz vs ${want.toFixed(1)} (${cents.toFixed(1)} cents)`);
+      assert.ok(Math.abs(dsp.pos / SR - 2 * rate) < 0.06, `tempo kept: pos ${dsp.pos / SR}`);
+    }
+  }
+});
+
+test('key shift keeps the output steady (no dropouts) and works inside a loop', () => {
+  const dsp = deck([{ name: 'mix', data: tone(440, 6) }], 6);
+  dsp.handle({ type: 'seek', pos: 1 });
+  dsp.handle({ type: 'set', playing: true, rate: 1, pitch: 2 ** (3 / 12), loop: { start: 1, end: 1.5 } });
+  const out = render(dsp, 3);
+  let min = Infinity;
+  for (let o = 9600; o + 960 < out.length; o += 960) { let p = 0; for (let i = o; i < o + 960; i++) p = Math.max(p, Math.abs(out[i])); min = Math.min(min, p); }
+  assert.ok(min > 0.35, `quietest window peak ${min}`);
+  assert.ok(dsp.pos >= SR * 1 && dsp.pos < SR * 1.5, `still looping: ${dsp.pos / SR}`);
+});
+
 test('mix minus a muted stem: original when nothing is muted, the remainder when muted', () => {
   const vocals = tone(440, 3, 0.2), drums = tone(880, 3, 0.2), mix = new Int16Array(vocals.length);
   for (let i = 0; i < mix.length; i++) mix[i] = vocals[i] + drums[i];
