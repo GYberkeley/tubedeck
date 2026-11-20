@@ -230,6 +230,8 @@ if (typeof document === 'undefined' && typeof self !== 'undefined' && typeof imp
       return;
     }
     if (m.type === 'align') { out.offset = alignOffset(m.mix, m.stems); self.postMessage(out); }
+    // Just the tags for the collection (no waveform or deck PCM).
+    if (m.type === 'tags') { const buf = asBuffer(ch0, ch1, sr); Object.assign(out, detectBeats(buf)); out.key = detectKey(buf); self.postMessage(out); }
   };
 }
 

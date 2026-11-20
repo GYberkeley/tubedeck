@@ -124,11 +124,11 @@ class HelperTest(unittest.TestCase):
     def setUp(self):
         os.environ["FAKE_DELAY"] = "0"
 
-    def req(self, path, method="GET", token=True, headers=None):
+    def req(self, path, method="GET", token=True, headers=None, body=None):
         h = dict(headers or {})
         if token:
             h["X-Tubedeck-Token"] = server.TOKEN
-        r = urllib.request.Request(self.base + path, method=method, headers=h)
+        r = urllib.request.Request(self.base + path, method=method, headers=h, data=body)
         try:
             with urllib.request.urlopen(r, timeout=20) as res:
                 return res.status, dict(res.headers), res.read()
@@ -179,6 +179,19 @@ class HelperTest(unittest.TestCase):
             self.assertEqual(server.tailscale_name(), "mac.tail1234.ts.net")
         with mock.patch.object(server.subprocess, "run", side_effect=OSError):
             self.assertIsNone(server.tailscale_name())   # no Tailscale: the helper starts as before
+
+    def test_analysis_is_stored_validated_and_listed(self):
+        fake_audio("anaTrack001")
+        good = json.dumps({"bpm": 124.0, "firstBeat": 0.21, "key": {"tonic": 9, "mode": "min"}}).encode()
+        self.assertEqual(self.req("/api/analysis?id=anaTrack001", "POST", body=good)[0], 200)
+        track = next(t for t in json.loads(self.req("/api/library")[2])["tracks"] if t["id"] == "anaTrack001")
+        self.assertEqual(track["analysis"], {"bpm": 124.0, "firstBeat": 0.21, "key": {"tonic": 9, "mode": "min"}})
+        self.assertIn("added", track)
+        for bad in [b"not json", json.dumps({"bpm": 9999, "firstBeat": 0, "key": {"tonic": 1, "mode": "min"}}).encode(),
+                    json.dumps({"bpm": 120, "firstBeat": 0, "key": {"tonic": 1, "mode": "dorian"}}).encode(), b"x" * 5000]:
+            self.assertEqual(self.req("/api/analysis?id=anaTrack001", "POST", body=bad)[0], 400)
+        self.assertEqual(self.req("/api/analysis?id=noSuchTrk01", "POST", body=good)[0], 404)       # only cached tracks
+        self.assertEqual(self.req("/api/analysis?id=anaTrack001", "POST", body=good, token=False)[0], 401)
 
     def test_rejects_bad_video_ids(self):
         for path, method in [("/api/fetch?id=../../etc", "POST"), ("/api/status?id=short", "GET")]:

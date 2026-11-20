@@ -731,6 +731,7 @@ class Deck {
       this.mixRef = r.ref;
       this.wave = r.wave; this.bpm = r.bpm; this.firstBeat = r.firstBeat; this.key = r.key;
       this.renderKey();
+      if (!meta.file) saveTags(meta.id, { bpm: r.bpm, firstBeat: r.firstBeat, key: r.key });
       this.recall();
       this.setState('');
       this.renderBpm();
@@ -1805,6 +1806,7 @@ const phones = {
 // ---------- browser: search, library, queue ----------
 const list = $('#list');
 let tab = 'results', results = [], library = [], helperState = { queue: [], downloading: [] };
+const libView = { sort: store.get('libSort') || 'added', match: false };   // collection sort and MATCH filter
 const readyIds = () => new Set(library.map(t => t.id));
 const htmlDecoder = document.createElement('textarea');
 
@@ -1885,17 +1887,24 @@ function showTab(name, keepContent) {
   tab = name;
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
   if (keepContent) return;
-  const items = name === 'results' ? results : library;
+  $('#libTools').hidden = name !== 'library';
+  let items = name === 'results' ? results : sortTracks(library);
+  if (name === 'library' && libView.match) items = items.filter(tagsMatch);
+  if (!items.length && name === 'library' && libView.match && library.length) {
+    list.innerHTML = `<li class="empty">${matchDeck() ? 'No tracks in your collection match the playing deck\'s key and tempo yet.' : 'Load a track on a deck to find tracks that mix with it.'}</li>`;
+    return;
+  }
   if (!items.length) {
     list.innerHTML = `<li class="empty">${name === 'results' ? 'Search for a track to get started.' : 'Nothing downloaded yet. Tracks you load are saved here and never re-downloaded.'}</li>`;
     return;
   }
-  const ready = readyIds();
+  const ready = readyIds(), tagsOf = id => library.find(x => x.id === id)?.analysis;
   list.innerHTML = items.map(t => {
-    const [cls, label] = stateLabel(t.id, ready);
+    const [cls, label] = stateLabel(t.id, ready), a = t.analysis || tagsOf(t.id), match = a && tagsMatch({ id: t.id, analysis: a });
     return `<li data-id="${escapeHtml(t.id)}">
       <img src="${escapeHtml(t.thumbnail || `https://i.ytimg.com/vi/${encodeURIComponent(t.id)}/mqdefault.jpg`)}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
       <div class="meta"><div class="t">${escapeHtml(t.title)}</div><div class="c">${escapeHtml(t.channel)}</div></div>
+      <span class="tags${match ? ' match' : ''}">${a ? `${a.bpm.toFixed(1)} · <b>${camelot(a.key)}</b>` : ''}</span>
       <span class="dur">${t.duration ? fmt(t.duration) : ''}</span>
       <span class="state ${cls}">${label}</span>
       ${cls === 'ready' ? '<span></span>' : '<button class="load prep" title="Download in the background">+</button>'}
@@ -1984,10 +1993,53 @@ window.addEventListener('drop', e => {
   audio();
   loadFiles(e.dataTransfer.files, deckUnder(e));
 });
+$('#libSort').value = libView.sort;
+$('#libSort').addEventListener('change', e => { libView.sort = e.target.value; store.set('libSort', libView.sort); showTab('library'); });
+$('#libMatch').addEventListener('click', e => { libView.match = !libView.match; e.target.classList.toggle('on', libView.match); showTab('library'); });
 $('#fileInput').addEventListener('change', e => { loadFiles(e.target.files); e.target.value = ''; });
 
+// ---------- collection: BPM / key tags, background analysis, sort and match ----------
+function saveTags(id, tags) {
+  const t = library.find(x => x.id === id);
+  if (t) t.analysis = tags;
+  api(`/api/analysis?id=${encodeURIComponent(id)}`, { method: 'POST', body: JSON.stringify(tags), headers: { 'Content-Type': 'application/json' } }).catch(() => {});
+  if (tab === 'library' || tab === 'results') showTab(tab);
+}
+// Tracks downloaded before key detection (or on another device) get tagged one at a
+// time in the background, waiting while any deck is loading so playback isn't affected.
+const tagger = {
+  busy: false, failed: new Set(),
+  async next() {
+    if (this.busy) return;
+    const t = library.find(x => !x.analysis && !this.failed.has(x.id));
+    if (!t || Object.values(decks).some(d => d.pending && !d.loaded)) return;
+    this.busy = true;
+    try {
+      const buf = await decodeAudio(await (await fetch(audioUrl(t.id))).arrayBuffer());
+      const { msg, transfer } = analyzer.channels(buf);
+      const r = await analyzer.run({ type: 'tags', ...msg }, transfer);
+      if (r.bpm && r.key) saveTags(t.id, { bpm: r.bpm, firstBeat: r.firstBeat, key: r.key }); else this.failed.add(t.id);
+    } catch { this.failed.add(t.id); }
+    this.busy = false;
+    const left = library.filter(x => !x.analysis && !this.failed.has(x.id)).length;
+    if (left) setTimeout(() => this.next(), 300);
+  },
+};
+// The deck a match is judged against: the master deck if it has a track, else any loaded deck.
+const matchDeck = () => [masterDeck(), ...Object.values(decks)].find(d => d?.track && d.key);
+function bpmMatches(a, b) { return [1, 2, 0.5].some(f => Math.abs(a * f / b - 1) <= 0.06); }
+function tagsMatch(t) {
+  const d = matchDeck(), a = t.analysis;
+  return !!(d && a && t.id !== d.track.id && keysMix(a.key, d.liveKey) && bpmMatches(a.bpm, d.liveBpm || d.bpm));
+}
+function sortTracks(items) {
+  const key = { title: t => (t.title || '').toLowerCase(), bpm: t => t.analysis?.bpm ?? 1e9, length: t => t.duration ?? 1e9,
+    key: t => t.analysis ? parseInt(camelot(t.analysis.key)) * 2 + (t.analysis.key.mode === 'maj' ? 1 : 0) : 1e9, added: t => -(t.added || 0) }[libView.sort];
+  return key ? [...items].sort((a, b) => (key(a) > key(b)) - (key(a) < key(b))) : items;
+}
+
 async function refreshLibrary() {
-  try { library = (await api('/api/library')).tracks; } catch {}
+  try { library = (await api('/api/library')).tracks; tagger.next(); } catch {}
   if (tab === 'library') showTab('library');
 }
 

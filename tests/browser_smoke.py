@@ -5,6 +5,7 @@ its own helper, separate from the unit tests):
     python3 tests/browser_smoke.py
 """
 
+import json
 import math
 import os
 import shutil
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import urllib.request
 import wave
 from pathlib import Path
 
@@ -115,7 +117,9 @@ class BrowserSmoke(unittest.TestCase):
         pg = self.browser.new_page(viewport={"width": width, "height": height}, has_touch=True)
         self.errors = []
         pg.on("pageerror", lambda e: self.errors.append(str(e)))
-        pg.on("console", lambda m: m.type == "error" and self.errors.append(f"{m.text} {m.location.get('url', '')}"))
+        # Thumbnails come from YouTube's image server, which test tracks aren't on (and CI may not reach).
+        pg.on("console", lambda m: m.type == "error" and "ytimg.com" not in m.location.get("url", "")
+              and self.errors.append(f"{m.text} {m.location.get('url', '')}"))
         pg.goto(self.base + (f"/?t={server.TOKEN}" if token else "/"))
         pg.wait_for_function("document.documentElement.dataset.theme")  # app.js has finished starting
         return pg
@@ -748,6 +752,32 @@ class BrowserSmoke(unittest.TestCase):
         self.assertEqual(report["controller"], "Pioneer DDJ-FLX4")
         self.assertEqual(len(report["tested"]) + len(report["notTested"]), total)
         self.assertEqual(report["jog"]["1"]["last"], 360)
+        self.assertEqual(self.errors, [])
+        pg.close()
+
+    def test_collection_tags_sort_and_match(self):
+        """Collection tracks get BPM and key in the background (saved by the helper), sort, and MATCH filters by mix."""
+        pg = self.page()
+        pg.evaluate("loadOnDeck('A', {id: 'kickTrack01', title: 'Kick Test 120'})")
+        pg.wait_for_function("decks.A.key", timeout=30000)
+        pg.wait_for_function("library.some(t => t.id === 'kickTrack01' && t.analysis)", timeout=30000)
+        saved = json.loads(urllib.request.urlopen(urllib.request.Request(self.base + "/api/library", headers={"X-Tubedeck-Token": server.TOKEN})).read())
+        track = next(t for t in saved["tracks"] if t["id"] == "kickTrack01")
+        self.assertAlmostEqual(track["analysis"]["bpm"], 120, delta=1)
+        pg.click(".tab[data-tab=library]")
+        self.assertFalse(pg.evaluate("document.querySelector('#libTools').hidden"))
+        self.assertRegex(pg.evaluate("document.querySelector('#list li[data-id=kickTrack01] .tags').textContent"), r"^120\.\d · (1[0-2]|[1-9])[AB]$")
+        # Two made-up tracks: one that mixes with deck 1 (same key, same tempo), one that doesn't.
+        pg.evaluate("""() => { const k = decks.A.liveKey;
+            library.push({ id: 'mixesWell01', title: 'Mixes well', analysis: { bpm: decks.A.liveBpm, firstBeat: 0, key: k }, added: 1 },
+                         { id: 'clashing001', title: 'Clashes', analysis: { bpm: 174, firstBeat: 0, key: { tonic: (k.tonic + 6) % 12, mode: k.mode } }, added: 2 });
+            showTab('library'); }""")
+        pg.select_option("#libSort", "bpm")
+        self.assertEqual(pg.evaluate("[...document.querySelectorAll('#list li[data-id]')].map(li => li.dataset.id).pop()"), "clashing001")
+        pg.click("#libMatch")
+        self.assertEqual(pg.evaluate("[...document.querySelectorAll('#list li[data-id]')].map(li => li.dataset.id)"), ["mixesWell01"])
+        pg.click("#libMatch")
+        pg.evaluate("library.splice(library.findIndex(t => t.id === 'mixesWell01'), 2); localStorage.removeItem('tubedeck.libSort')")
         self.assertEqual(self.errors, [])
         pg.close()
 
